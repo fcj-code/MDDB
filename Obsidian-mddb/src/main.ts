@@ -4,6 +4,8 @@ import { MDDBEngine } from './engine/engine';
 import { ViewIntegration } from './view/integration';
 import type { FileOperator } from './write/types';
 import { TABLE_VIEW_TYPE } from './view/table/table-view';
+import { TableViewModel } from './view/table/table-view-model';
+import { InlineTableRenderer } from './view/table/inline-renderer';
 import { parseTableBlock } from './view/parser';
 import type { VaultScanResult } from './parse/pipeline';
 import { FormBuilder } from './view/shared/form-builder';
@@ -118,7 +120,6 @@ export default class MDDBPlugin extends Plugin {
       // 每个 el 只渲染一次 — Obsidian 在 sync + postProcess 等多个阶段重复调用
       if (el.hasClass('mddb-rendered')) return;
       el.addClass('mddb-rendered');
-
       el.empty();
 
       const result = parseTableBlock(source);
@@ -131,52 +132,18 @@ export default class MDDBPlugin extends Plugin {
       }
 
       const config = result.config;
-      const { engine } = this;
-
-      // 执行查询并渲染
-      // 使用字段名字符串数组，确保 sql-generator 能正确处理
-      const selectClause = config.columns.length > 0
-        ? { columns: config.columns }
-        : undefined;
-
-      const query = {
-        table: config.table,
-        select: selectClause,
-        sort: config.sort,
-        limit: config.pageSize ?? 200,
-      };
-
-      const queryResult = engine.query(query);
-      if (!queryResult.ok) {
-        el.createEl('div', { cls: 'mddb-error', text: `Query error: ${queryResult.error.message}` });
-        return;
+      // 确保包含 storage_pk 列（编辑/删除需要）
+      if (!config.columns.includes('storage_pk')) {
+        config.columns = ['storage_pk', ...config.columns];
       }
 
-      const rs = queryResult.value;
-
-      // 渲染表格
-      const table = el.createEl('table', { cls: 'mddb-table' });
-      const thead = table.createEl('thead');
-      const headerRow = thead.createEl('tr');
-      for (const col of rs.columns) {
-        headerRow.createEl('th', { text: col.name });
-      }
-
-      const tbody = table.createEl('tbody');
-      for (const row of rs.rows) {
-        const tr = tbody.createEl('tr');
-        for (const col of rs.columns) {
-          tr.createEl('td', { text: formatCellValue(row[col.name]) });
-        }
-      }
-
-      // 行数提示
-      if (rs.total > rs.rows.length) {
-        el.createEl('div', {
-          cls: 'mddb-pagination',
-          text: `Showing ${rs.rows.length} of ${rs.total} rows`,
-        });
-      }
+      const vm = new TableViewModel(`table-${Date.now()}`, this.engine, config);
+      vm.initialize().then(() => {
+        const renderer = new InlineTableRenderer(vm, el);
+        renderer.mount();
+        (el as any).__mddbRenderer = renderer;
+        (el as any).__mddbViewModel = vm;
+      });
     });
 
     // ── mddb-form 代码块处理器 ──
@@ -460,16 +427,6 @@ export default class MDDBPlugin extends Plugin {
       },
     };
   }
-}
-
-// ── 辅助 ──
-
-function formatCellValue(val: unknown): string {
-  if (val === null || val === undefined) return '-';
-  if (typeof val === 'number') {
-    return String(val);
-  }
-  return String(val);
 }
 
 // ============================================================

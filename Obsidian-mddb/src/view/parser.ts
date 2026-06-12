@@ -127,7 +127,7 @@ export function parseTableBlock(content: string): ParseResult {
       filter: config.filter,
       sort: config.sort && config.sort.length > 0 ? config.sort : undefined,
       pageSize: config.pageSize ?? 50,
-      readonly: true,
+      readonly: false,  // 改为 false，表格支持编辑
     },
     errors,
   };

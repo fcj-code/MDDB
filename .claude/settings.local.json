@@ -7,7 +7,8 @@
       "Bash(cp \"C:/Users/cgf/Desktop/MDDb/Obsidian-mddb/main.js\" \"C:/Users/cgf/Desktop/税法/CPA项目与财务工作笔记/.obsidian/plugins/md-db/main.js\")",
       "Read(//c/Users/cgf/Desktop/税法/CPA项目与财务工作笔记/.obsidian/plugins/md-db/**)",
       "Bash(git add *)",
-      "Bash(git commit -m 'feat\\(types\\): add EditingCell interface and new ViewEventType members *)"
+      "Bash(git commit -m 'feat\\(types\\): add EditingCell interface and new ViewEventType members *)",
+      "Bash(git commit -m 'Task 5: mddb-table processor uses TableViewModel + InlineTableRenderer; parser.ts readonly=false *)"
     ]
   }
 }
