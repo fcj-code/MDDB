@@ -46,6 +46,16 @@ export interface ViewRow {
 }
 
 // ============================================================
+// 编辑状态
+// ============================================================
+
+export interface EditingCell {
+  rowIndex: number;
+  col: string;
+  originalValue: unknown;
+}
+
+// ============================================================
 // 视图事件
 // ============================================================
 
@@ -55,7 +65,19 @@ export type ViewEventType =
   | 'sort-changed'
   | 'page-changed'
   | 'error'
-  | 'refresh';
+  | 'refresh'
+  // ★ 编辑相关
+  | 'edit-start'
+  | 'edit-commit'
+  | 'edit-cancel'
+  // ★ 列可见性
+  | 'column-visibility-changed'
+  // ★ CRUD
+  | 'row-deleted'
+  | 'row-inserted'
+  // ★ 操作菜单
+  | 'action-menu-opened'
+  | 'action-menu-closed';
 
 export interface ViewEvent {
   type: ViewEventType;
