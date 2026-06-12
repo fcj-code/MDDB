@@ -242,6 +242,7 @@ export class TableViewModel extends BaseViewModel {
 
     try {
       const row = this.tableState.rows[rowIndex];
+      if (!row) return false;
       const storagePk = row.cells['storage_pk'] as string;
       if (!storagePk) throw new Error('No storage_pk for this row');
 
