@@ -6,6 +6,7 @@ import type { FileOperator } from './write/types';
 import { TABLE_VIEW_TYPE } from './view/table/table-view';
 import { parseTableBlock } from './view/parser';
 import type { VaultScanResult } from './parse/pipeline';
+import { FormBuilder } from './view/shared/form-builder';
 
 // sql.js JS 在 esbuild 打包时内联，WASM 通过 fs.readFileSync 加载
 // （__dirname 在 Obsidian Electron 中不可靠，且 file:// 被安全策略阻止）
@@ -192,80 +193,14 @@ export default class MDDBPlugin extends Plugin {
         return;
       }
 
-      const { engine } = this;
-      const schema = engine.schemaRegistry.getSchema(config.table);
+      const schema = this.engine.schemaRegistry.getSchema(config.table);
       if (!schema) {
         el.createEl('div', { cls: 'mddb-error', text: `Table "${config.table}" not found` });
         return;
       }
 
-      // 预加载所有 ref 表的下拉数据
-      const refCache = new Map<string, Array<{ value: string; label: string }>>();
-      for (const [i, typeExpr] of schema.types.entries()) {
-        const refMatch = typeExpr.match(/^ref\((\S+)\)$/);
-        if (!refMatch) continue;
-        const refTable = refMatch[1]!;
-        if (refCache.has(refTable)) continue;
-
-        try {
-          const qr = engine.query({ table: refTable, limit: 500 });
-          if (qr.ok) {
-            const rs = qr.value;
-            // 跳过 storage_pk 列，使用第一个用户字段作为显示值
-            const refSchema = engine.schemaRegistry.getSchema(refTable);
-            const labelField = refSchema?.fields[0] ?? rs.columns.find(c => c !== 'storage_pk') ?? rs.columns[0] ?? '';
-            const options = rs.rows.map(r => ({
-              value: String(r[labelField] ?? ''),
-              label: String(r[labelField] ?? ''),
-            }));
-            refCache.set(refTable, options);
-          }
-        } catch { /* ref load failed, dropdown stays empty */ }
-      }
-
-      const form = el.createEl('div', { cls: 'mddb-form-container' });
-      const fieldInputs = new Map<string, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>();
-
-      const fieldList = config.fields.length > 0
-        ? config.fields.map(f => f.trim()).filter(f => schema.fields.includes(f))
-        : schema.fields;
-
-      for (const field of fieldList) {
-        const idx = schema.fields.indexOf(field);
-        const typeExpr = schema.types[idx] ?? 'string';
-        const typeName = typeExpr.split('(')[0]!;
-        const required = schema.required[idx] ?? false;
-        const row = form.createEl('div', { cls: 'mddb-form-row' });
-        row.createEl('label', { cls: 'mddb-form-label', text: `${field}${required ? ' *' : ''}` });
-
-        let input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-
-        if (typeName === 'boolean') {
-          input = row.createEl('input', { type: 'checkbox' }) as HTMLInputElement;
-        } else if (typeName === 'ref') {
-          const refTable = typeExpr.match(/^ref\((\S+)\)$/)?.[1] ?? '';
-          const options = refCache.get(refTable) ?? [];
-          input = row.createEl('select') as HTMLSelectElement;
-          (input as HTMLSelectElement).createEl('option', { text: '--', value: '' });
-          for (const opt of options) {
-            (input as HTMLSelectElement).createEl('option', { text: opt.label, value: opt.value });
-          }
-        } else if (typeName === 'enum') {
-          const enumOptions = typeExpr.match(/\(([^)]+)\)/)?.[1]?.split(',').map(s => s.trim()) ?? [];
-          input = row.createEl('select') as HTMLSelectElement;
-          for (const opt of enumOptions) {
-            (input as HTMLSelectElement).createEl('option', { text: opt, value: opt });
-          }
-        } else if (typeName === 'text') {
-          input = row.createEl('textarea', { attr: { rows: '3' } }) as unknown as HTMLTextAreaElement;
-        } else if (typeName === 'date') {
-          input = row.createEl('input', { type: 'date' }) as HTMLInputElement;
-        } else {
-          input = row.createEl('input', { type: 'text' }) as HTMLInputElement;
-        }
-
-        fieldInputs.set(field, input);
-      }
+      const { element: form, getValues } = FormBuilder.render(this.engine, schema, { mode: config.mode });
+      el.appendChild(form);
 
       const btnRow = form.createEl('div', { cls: 'mddb-form-actions' });
       const submitBtn = btnRow.createEl('button', { text: '保存', cls: 'mddb-form-submit' });
@@ -275,22 +210,14 @@ export default class MDDBPlugin extends Plugin {
         submitBtn.disabled = true;
         statusEl.setText('Saving...');
         try {
-          const record: Record<string, unknown> = {};
-          for (const [field, input] of fieldInputs) {
-            const isCheckbox = 'type' in input && (input as HTMLInputElement).type === 'checkbox';
-            const val = isCheckbox ? (input as HTMLInputElement).checked : (input as HTMLSelectElement | HTMLTextAreaElement).value;
-            record[field] = val === '' || val === false ? null : val;
-          }
-          const result = await engine.insert(config.table, record);
+          const record = getValues();
+          const result = await this.engine.insert(config.table, record);
           statusEl.setText(`Saved: ${result.storagePk.slice(0, 8)}`);
           if (!config.keepOpen) {
-            for (const [, input] of fieldInputs) {
-              if ('type' in input && (input as HTMLInputElement).type === 'checkbox') {
-                (input as HTMLInputElement).checked = false;
-              } else {
-                (input as HTMLSelectElement | HTMLTextAreaElement).value = '';
-              }
-            }
+            // 重置表单：移除旧表单，重新渲染
+            el.empty();
+            const { element: newForm } = FormBuilder.render(this.engine, schema, { mode: config.mode });
+            el.appendChild(newForm);
           }
         } catch (e) {
           statusEl.setText(`Error: ${(e as Error).message}`);
