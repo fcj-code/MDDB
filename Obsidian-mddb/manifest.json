@@ -1,0 +1,10 @@
+{
+  "id": "md-db",
+  "name": "MD-DB",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Markdown 数据库引擎 — 结构化查询与编辑 .md 文件",
+  "author": "",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

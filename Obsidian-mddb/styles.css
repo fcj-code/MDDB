@@ -1,0 +1,11 @@
+/* MD-DB Plugin Styles — Phase 0 minimal */
+
+.md-db-status {
+  color: var(--text-muted);
+}
+
+.md-db-table-view,
+.md-db-form-view {
+  width: 100%;
+  overflow: auto;
+}
