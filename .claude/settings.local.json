@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(npx vitest *)",
+      "Bash(node *)",
+      "Bash(cp \"C:/Users/cgf/Desktop/MDDb/Obsidian-mddb/main.js\" \"C:/Users/cgf/Desktop/税法/CPA项目与财务工作笔记/.obsidian/plugins/md-db/main.js\")",
+      "Read(//c/Users/cgf/Desktop/税法/CPA项目与财务工作笔记/.obsidian/plugins/md-db/**)"
+    ]
+  }
+}

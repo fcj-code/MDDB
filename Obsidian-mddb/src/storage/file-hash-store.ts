@@ -42,6 +42,11 @@ export class FileHashStore {
     return stored !== undefined && stored === hash;
   }
 
+  /** 清除所有哈希 */
+  clearAll(): void {
+    this.hashes = {};
+  }
+
   /** 序列化 */
   toJson(): string {
     return JSON.stringify(this.hashes, null, 2);

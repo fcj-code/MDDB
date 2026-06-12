@@ -1,0 +1,2486 @@
+╭─── Claude Code v2.1.170 ─────────────────────────────────────────────────────╮
+│                                         │ Tips for getting started           │
+│              Welcome back!              │ Run /init to create a CLAUDE.md f… │
+│                                         │ ────────────────────────────────── │
+│                 ▐▛███▜▌                 │ What's new                         │
+│                ▝▜█████▛▘                │ Introducing Claude Fable 5: a Myt… │
+│                  ▘▘ ▝▝                  │ Fixed sessions not saving transcr… │
+│                                         │ Self-hosted runner: added a `post… │
+│   deepseek-v4-pro · API Usage Billing   │ /release-notes for more            │
+│             ~\Desktop\MDDB              │                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+> /clear                                                                        
+
+> @docs\specs\2026-06-10-implementation-roadmap.md                              
+  开始讨论视图层设计，同步分别提问方式来确定设计方案                            
+  ⎿  Read docs\specs\2026-06-10-implementation-roadmap.md (958 lines)
+
+  Thought for 8s (ctrl+o to expand)
+
+● Skill(superpowers:brainstorming)
+  ⎿  Successfully loaded skill
+
+  Thought for 5s (ctrl+o to expand)
+
+● Now let me explore the project context — reading the key design documents to
+  understand the existing architecture before we start the view layer
+  discussion.
+
+  Thought for 2s (ctrl+o to expand)
+
+  Thought for 9s, searched for 2 patterns, read 2 files (ctrl+o to expand)
+
+  Thought for 2s (ctrl+o to expand)
+
+● 现在我对项目和现有的架构有了全面的理解。在开始讨论视图层之前—
+
+  有些视觉方面的设计讨论（例如视图布局、组件交互、UI
+  结构等）可能会更容易通过浏览器展示。我可以实时构建模型、图表、对比和其他视觉材
+  料。这个特性仍在实验阶段且可能消耗较多 token。想试试吗？（需要在本地打开一个
+  URL）
+
+  如果不使用，我们就在终端用纯文本同样可以完成设计讨论。
+
+✻ Cogitated for 1m 9s
+
+> 不使用视觉展示                                                                
+  Thought for 4s (ctrl+o to expand)
+
+● 好的，我们就在终端用纯文本讨论。
+
+  现在进入视图层设计讨论。在此之前，让我先确认一下范围。
+
+  根据路线图，Phase 17「视图层 API」标记为待设计。但从 构思v1.0.md 第四节可以看
+  到，之前讨论过八大视图类型：表格、看板、日历、画廊、列表、图表、图谱、表单。
+
+  第一个问题：本次讨论的范围是什么？
+
+  - A（推荐）：聚焦 Phase 17 本身 — 视图层与查询引擎之间的编程接口（API
+  设计、Query 消费方式、订阅/事件系统、生命周期管理、与 Obsidian
+  MarkdownPostProcessor 集成）。具体的 UI 组件（表格、看板等）作为后续 Phase
+  单独设计。
+  - B：Phase 17 接口 + 一个 MVP
+  视图组件（表格视图），用一个落地实现验证接口设计的合理性。
+  - C：全面讨论 — Phase 17 接口 + 所有八大视图的详细设计。
+
+✻ Crunched for 11s
+
+> 讨论接口和几个基本的视图（表格视图+表单视图）                                 
+
+  Thought for 5s (ctrl+o to expand)
+
+● 好的，范围明确：视图层 API 接口 + 表格视图 + 表单视图。
+
+  现在我们按顺序逐个决策。从最基础的问题开始。
+
+  ---
+  问题 1：视图层如何消费查询引擎的数据？
+
+  查询引擎已经提供了 QueryEngine.query(q: Query): ResultOrError 和 queryRaw()
+  两个入口。视图组件与查询引擎之间的交互方式有三种选择：
+
+  - A（推荐） — ViewModel 封装：为每种视图类型提供专用的 ViewModel 类（如
+  TableViewModel、FormViewModel），内部持有 Query
+  对象，暴露视图所需的数据和操作。视图组件不直接接触 QueryEngine 和 ResultSet
+  原始类型，而是消费 ViewModel 已处理好的渲染就绪数据。
+
+  TableViewModel
+    .query({ table: 'contacts', sort: [...], filter: [...] })
+    → 内部调用 QueryEngine → 处理 ref 展开 → 列元数据 → 格式化
+    → 暴露：columns[], rows[], pageInfo, sortState, filterState
+  - B — 直接消费 ResultSet：视图组件直接调用 QueryEngine.query() 并消费原始
+  ResultSet，不做额外封装。视图组件自身负责把 ResultSet 转为渲染数据。
+
+  TableComponent
+    → QueryEngine.query({ table: 'contacts' })
+    → 从 ResultSet.columns/rows 直接渲染
+  - C — 声明式数据绑定：类似 Dataview 风格，视图通过声明式查询字符串（如 FROM 
+  contacts WHERE ...）绑定数据源，由框架自动处理查询执行和结果注入。
+
+  你倾向哪种方式？
+
+✻ Worked for 16s
+
+> 视图既可以展示数据，也可以操作数据                                            
+
+  Thought for 4s (ctrl+o to expand)
+
+● 对，视图不只是"看"数据，还要能增删改。这其实让 A（ViewModel） 更有优势 —
+  ViewModel 封装 CRUD 操作，确保视图层的读写数据流保持一致。
+
+  我更新一下选项描述：
+
+  ---
+  问题 1（更新）：视图层与引擎层的交互模式
+
+  - A（推荐） — ViewModel 封装读写：每种视图类型提供专用 ViewModel，内部持有
+  Query 和对引擎的事务引用。负责：查询获取数据 →
+  格式化为渲染就绪结构；同时也负责接收视图的操作（新增行、修改单元格、删除行）→
+  调用引擎 CRUD / 事务接口 → 刷新数据。视图组件不直接接触 QueryEngine。
+
+  TableViewModel                    FormViewModel
+    .query({...})                     .loadRecord(pk)
+    .insertRow(values)                .saveField(field, value)
+    .updateCell(pk, col, val)         .validate()
+    .deleteRow(pk)                    .commit()
+    .refresh()
+    .onDataChange(cb)
+  - B — 视图直连引擎：视图组件直接调用 QueryEngine.query() 消费
+  ResultSet，同时直接调用引擎的 CRUD
+  API（engine.insert/update/delete）。视图自己管理读和写两套调用。
+
+  TableComponent
+    → QueryEngine.query() 读取
+    → Engine.insert/update/delete() 写入
+    → 自行处理写入后的刷新
+  - C — 声明式数据绑定 + 操作：声明式定义数据绑定（类似 Dataview），操作通过
+  action 系统抽象（action: 'insert' | 'update' | 
+  'delete'），框架自动处理执行和刷新。
+
+  ---
+  你倾向哪种？
+
+✻ Cooked for 15s
+
+> 分析建议                                                                      
+
+  Thought for 21s (ctrl+o to expand)
+
+● 让我分析三个选项的利弊。
+
+  ---
+  Option B（视图直连引擎）的问题
+
+  每条读写路径都要将 QueryEngine 和 CRUD API 的调用缝合到视图组件中。每个视图类
+  型（表、表单、后续的看板等）都会重复同样的管道：拼 Query → 调 query() → 解析
+  ResultSet → 格式化 decimal/null/ref → 渲染；写入时又要自己调 engine →
+  处理冲突/失败 → 刷新。重复 5 次就是 5
+  套独立的读写管道，错误处理不统一，引擎接口变了要改 N 处。
+
+  Option C（声明式数据绑定）的问题
+
+  前期投资巨大。本质上是在代码 API 之上再建一层声明式框架 ——
+  需要设计声明语法、解析器、action 路由、自动刷新机制。这是"当你有 50
+  个视图且用户是终端用户"时才需要的抽象。我们现在的用户是开发者（写视图组件的我
+  们自己），第一版就走这条路是过度设计。
+
+  Option A（ViewModel）的理由
+
+  视图层的一个核心事实是：读和写共享同一条数据路径。用户在表格中修改一个单元格：
+
+  视图检测变更 → 乐观更新 UI → ViewModel.updateCell(pk, col, val)
+    → 调引擎 update() → 处理冲突/失败 → 通知订阅者 → 其他视图感知变更
+
+  ViewModel 是这个数据路径的"枢纽"。它不只是一个查询包装器 ——
+  它是视图对引擎的唯一接触面。收益：
+
+  - 每种视图类型只需写一次读写管道。TableViewModel 封装了表格特有的交互模式（排
+  序、过滤、分页、单元格编辑、行删除）。FormViewModel
+  封装了表单特有的交互（加载单记录、按字段保存、校验后提交）。后续加第 3、4
+  种视图时，模式已经确立。
+  - 格式化集中处理：decimal 显示、null 标记、ref 展开、默认排序 —— 在 ViewModel
+  中处理一次，所有消费方受益。
+  - 跨视图数据同步：两个视图看同一张表，一个改了数据，另一个通过 ViewModel
+  的订阅自动感知。
+  - 可测试性：ViewModel 可以 mock 掉引擎，独立测试其逻辑。
+
+  建议：A
+
+  这个是视图层的架构基础，一旦选定会影响后续所有视图的设计。你同意 A 吗？
+✻ Cogitated for 39s
+
+> 同意A,尽量保证后期扩展更多视图的时候复用一套逻辑                              
+
+  Thought for 5m 15s (ctrl+o to expand)
+
+● 好的，A 确定。现在很自然会引出一个结构问题：
+
+  ---
+  问题 2：ViewModel 的分层结构
+
+  所有视图都需要的"公共逻辑"与每种视图的"特有逻辑"如何分离？两种思路：
+
+  - A（推荐） — BaseViewModel 抽象基类 + 视图 ViewModel 继承
+
+  BaseViewModel<T>                           ←
+  公共：query、CRUD、事件总线、生命周期
+  ├── TableViewModel extends BaseViewModel   ←
+  特有：排序状态、过滤状态、分页、列元数据
+  ├── FormViewModel extends BaseViewModel    ←
+  特有：单记录加载、字段校验、脏状态跟踪
+  ├── KanbanViewModel extends BaseViewModel  ← 以后
+  └── ...
+
+  - 公共层提供：query() / refresh() / insert() / update() / delete() /
+  subscribe() / dispose() / 格式化管道。
+  - B — 单一 ViewModel + 策略模式：只有一个 ViewModel 类，通过 viewType 参数 +
+  注入的策略对象切换行为。公用逻辑在 ViewModel 内部按 viewType 分支。
+
+  const vm = new ViewModel({ table: 'contacts', viewType: 'table', ... })
+  - C — 组合模式：公共逻辑拆成独立的小服务（QueryService、CrudService、EventBus
+  、Formatter），每种视图的 ViewModel 自行组合所需的部件，不设继承链。
+
+  class TableViewModel {
+    constructor(private queryService, private crudService, private events, ...)
+  }
+
+  你倾向哪种？
+
+✻ Cogitated for 5m 27s
+
+> 继续                                                                          
+
+  Thought for 1m 23s (ctrl+o to expand)
+
+● Option B（单一 ViewModel + 策略）否决
+
+  所有视图类型塞进一个类，内部靠 if (viewType === 'table') ... else if (viewType
+  === 'form') ... 分支。表格有分页，表单没有；表单有脏跟踪，表格没有。这些差异
+  不是"换个策略对象"能优雅解决的，最终会变成一个上帝类。
+
+  Option C（纯组合）的问题
+
+  灵活但缺乏约束。每种新视图都可以自由选择组合哪些部件，两次实现可能完全不同。在
+  "后期扩展更多视图时复用一套逻辑"的目标下，纯组合缺少强制性的公共层契约，容易写
+  散。
+
+  Option A（BaseViewModel 抽象基类）最匹配
+
+  继承链恰恰是"复用一套逻辑"的实现手段：
+
+  BaseViewModel
+    每个视图必然需要的：                 每种视图自己定义的：
+    ├ query(config)                    ├
+  渲染适配数据（columns/rows、fields/values）
+    ├ refresh()                        ├
+  视图状态管理（sort/filter/pagination、dirty/validation）
+    ├ subscribe(event, cb)             └
+  视图特有操作（sort/filter/page、saveField/submit）
+    ├ insert / update / delete
+    ├ formatPipeline (decimal/null/ref)
+    └ dispose()
+
+  公共层定义所有视图一致的契约。加第三种视图（例如看板）时，只需实现它自己那部分
+  。Base 层不会膨胀 —— 每种视图不同的东西不进 Base。
+
+  一个关键约束：BaseViewModel
+  只持有查询配置和事件总线，不知道"表格"或"表单"是什么。它不假设 UI
+  形态。这保证后期加新视图类型时 Base 不用改。
+
+  ---
+  你同意 A（BaseViewModel + 继承）吗？
+
+✻ Crunched for 1m 27s
+
+> 表格视图的过滤排序也可能在看板视图复用                                        
+
+  Thought for 14s (ctrl+o to expand)
+
+● 说得对。过滤和排序不应该锁在表格里 —— 看板要按状态过滤、日历要按日期范围过滤、
+  画廊要按标签排序。这些是跨视图的通用查询语义。
+
+  修正后的分层：
+
+  BaseViewModel                              ◀ 所有视图共享
+  ├ query / refresh()
+  ├ filter state (add / remove / clear)       ◀ 从 Table 提升上来的
+  ├ sort state (set / clear / multi-sort)     ◀ 从 Table 提升上来的
+  ├ insert / update / delete
+  ├ format pipeline
+  ├ event bus (subscribe / emit)
+  ├ pagination state (可选启用)
+  └ dispose()
+
+  TableViewModel extends BaseViewModel       ◀ 表格特有
+  ├ column metadata (visible/hidden/width)
+  ├ cell editing state
+  └ row selection
+
+  FormViewModel extends BaseViewModel        ◀ 表单特有
+  ├ load single record by pk
+  ├ field-level validation
+  ├ dirty tracking
+  └ submit / reset
+
+  KanbanViewModel extends BaseViewModel      ◀ 以后
+  ├ groupBy field
+  ├ swimlane config
+  └ card drag state
+
+  关键原则：Base 负责"要什么数据"（查询 + 过滤 + 排序 +
+  分页），子类负责"数据长什么样"（列配置、表单字段、看板分组）。
+
+  这样加看板时，过滤和排序逻辑已经在 Base 里了，只需实现 groupBy
+  和卡片布局相关的部分。
+
+  你同意这个修正后的分层吗？
+
+✻ Brewed for 24s
+
+> 同意                                                                          
+
+  Thought for 5s (ctrl+o to expand)
+
+● 确定。现在讨论事件系统。
+
+  ---
+  问题 3：BaseViewModel 的事件/订阅机制
+
+  视图需要感知数据变化以更新 UI。场景包括：
+
+  - 用户在表格视图修改单元格 → 同一页上的表单视图看到最新值
+  - 外部文件变更（vault.on('modify')）→ 引擎重扫 → 视图刷新
+  - CRUD 操作失败 → 视图提示用户
+
+  BaseViewModel 的事件通知有两种设计思路：
+
+  - A — 通用事件总线：BaseViewModel
+  暴露出几个固定事件，订阅者收到统一的通知对象。
+
+  type ViewEvent =
+    | { type: 'data-changed'; changes: Change[] }    // 数据层变更
+    | { type: 'state-changed'; state: ViewState }    // 
+  查询状态变更（sort/filter/page 变化）
+    | { type: 'error'; errors: Error[] }             // 操作失败
+
+  vm.on('data-changed', (changes) => { ... })
+  vm.on('error', (errors) => { ... })
+  - B — 细粒度事件：每种操作触发的独立回调注册。
+
+  class BaseViewModel {
+    onDataChange(cb: (changes: Change[]) => void): Disposable
+    onStateChange(cb: (state: ViewState) => void): Disposable
+    onInsert(cb: (record: Record) => void): Disposable
+    onUpdate(cb: (pk: string, field: string, newValue: any) => void): Disposable
+    onDelete(cb: (pk: string) => void): Disposable
+    onError(cb: (errors: Error[]) => void): Disposable
+  }
+
+  你倾向哪种？
+
+✻ Churned for 16s
+
+> 分析建议                                                                      
+
+  Thought for 14s (ctrl+o to expand)
+
+● 核心判断标准：跨视图同步场景
+
+  一个表格视图编辑单元格后，旁边的表单视图需要感知。两种方案在这个场景下的表现：
+
+  Option A（事件类型 + 负载内含语义）
+
+  表格的 TableViewModel → 调基类 update() → 成功 →
+    发 { type: 'data-changed', changes: [{ type: 'update', pk, field, newValue
+  }] }
+  表单的 FormViewModel 已订阅 'data-changed' → 收到通知 → 判断自己的 pk
+  是不是被改动的 pk →
+    是 → 刷新显示
+    否 → 忽略
+
+  一条订阅、一个处理函数、按需判断。
+
+  Option B（细粒度回调）
+
+  表单要关心 3 个回调：
+    onInsert(cb) → 检查插入的记录是否自己正在编辑的
+    onUpdate(cb) → 同上，更新显示
+    onDelete(cb) → 同上，提示"记录已被删除"
+  每个回调都要管理 Disposable。新增操作类型（如批量导入）→ 加新方法 →
+  所有视图的订阅代码都要检查。
+
+  表面更类型安全，实则把复杂性摊给了每个消费者。
+
+  建议：A
+
+  理由：
+
+  - Obsidian 平台一致性：Obsidian 自己的 API 就是 vault.on('modify', cb)
+  模式，保持一致减少学习成本
+  - Change 类型用 discriminated union，TypeScript 的类型收窄仍然有效：
+
+  type Change =
+    | { type: 'insert'; record: Record }
+    | { type: 'update'; pk: string; field: string; oldValue: any; newValue: any
+  }
+    | { type: 'delete'; pk: string }
+
+  vm.on('data-changed', (changes) => {
+    for (const c of changes) {
+      switch (c.type) {
+        case 'update': ... // TypeScript 知道 c.field, c.newValue
+        case 'delete': ... // TypeScript 知道只有 c.pk
+      }
+    }
+  })
+  - API 表面小：on(type, cb) + off(type, cb) 两个方法，不随操作类型增长
+
+  你同意 A 吗？
+✻ Churned for 28s
+
+> 同意                                                                          
+
+  Thought for 4s (ctrl+o to expand)
+
+● 现在事件系统已定。下一个关键问题——
+
+  ---
+  问题 4：表格视图的定义方式
+
+  用户怎么声明"我要在这里显示一张表，显示这些列，按这种排序"？三种思路：
+
+  - A — 编程式 API：视图组件通过 TypeScript 创建和配置
+  ViewModel，完全代码驱动。这是 Phase 15 的架构自然延伸。
+
+  const vm = new TableViewModel({
+    table: 'contacts',
+    columns: ['姓名', '公司', '职位', '重要度'],
+    sort: [{ field: '重要度', dir: 'desc' }],
+    filter: { logic: 'and', conditions: [...] },
+    pageSize: 20
+  })
+
+  - 视图定义代码在 Obsidian 插件自身的 main.ts 或视图模块中。当前阶段不暴露给 
+  Markdown 中的终端用户。
+  - B — Markdown 声明式：终端用户在 .md 文件中写代码块定义视图。Obsidian 的
+  MarkdownPostProcessor 解析代码块 → 替换为渲染后的表格 DOM。
+
+  ```mddb-table
+  table: contacts
+  columns: 姓名, 公司, 职位
+  sort: 重要度 desc
+  page-size: 20
+  ```
+  - C — 代码优先 + 声明式桥接：先实现编程式 API（A），同时在 BaseViewModel
+  层预留序列化/反序列化能力，让 TableViewModel 可以从 A 的配置对象或 B
+  的声明式配置串同时被构建。但声明式语法（B）推迟实现。
+
+  你倾向哪种？
+
+✻ Baked for 16s
+
+> 分析建议                                                                      
+
+  Thought for 15s (ctrl+o to expand)
+
+● 现状判断
+
+  当前阶段没有终端用户写 Markdown 声明视图的需求 —— Phase 17
+  的定位是"视图组件代码如何消费引擎"。Query 对象是 TypeScript 接口，视图组件也是
+  TypeScript 写的。
+
+  Option B 的问题
+
+  声明式语法需要额外设计：DSL 语法 → 解析器 → 映射到 ViewModel 配置 →
+  错误报告给用户。这是又一个"当你有 50
+  个视图且用户是终端用户"时做的事情。而且它和 Phase 15
+  的声明式查询入口（DQL，远期）是同一性质 —— 都该放在远期。
+
+  Option A vs C 的关键区别
+
+  实际上 C 的成本极低。如果 ViewModel 的配置对象本身就是一个纯数据的
+  interface（可序列化），那 A 和 B 之间没有鸿沟：
+
+  // 这就是一个纯数据对象 —— 既可以来自代码，也可以来自 YAML parse 结果
+  interface TableConfig {
+    table: string;
+    columns?: string[];
+    sort?: SortClause[];
+    filter?: FilterGroup;      // 已经设计的结构，天然可序列化
+    pageSize?: number;
+  }
+
+  // 编程式用法（当前）：直接构造配置对象
+  const vm = new TableViewModel({ table: 'contacts', columns: [...], sort: [...]
+  })
+
+  // 声明式用法（远期）：解析 Markdown 代码块 → 同样的 JSON 配置
+  // YAML 解析 → { table: 'contacts', columns: [...], sort: [...] } → new 
+  TableViewModel(config)
+
+  不需要"桥接层" —— 配置类型本身可序列化，序列化/反序列化是 JSON/YAML
+  库的事，不是我们发明的。
+
+  建议：C（但比想象中更轻）
+
+  确定 TableConfig、FormConfig
+  等为可序列化的纯数据接口。当前只实现编程式构造。远期声明式支持只需：parse
+  markdown code block → 得到同一份 config 对象 → 传入同一个 ViewModel 构造函数。
+
+  不额外写桥接层。Config 接口本身 = 桥。
+
+  你同意吗？
+
+✻ Baked for 29s
+
+> C具体怎么理解，通俗的说明一下                                                 
+
+  Thought for 4s (ctrl+o to expand)
+
+● 用吃饭类比：
+
+  你只关心菜单长什么样，不关心菜单是从哪来的。
+
+  // 这份"菜单"就是纯数据，结构固定：
+  const 点菜 = {
+    桌号: 'contacts',
+    要哪些列: ['姓名', '公司', '职位'],
+    怎么排: [{ 按: '重要度', 顺序: '从高到低' }],
+    每页几条: 20
+  }
+
+  现在：厨师（插件代码）直接把菜单递给厨房（ViewModel）：
+
+  const vm = new TableViewModel(点菜)  // 代码里手写配置
+
+  以后：食客（终端用户）在 Markdown 里写：
+
+  ```mddb-table
+  table: contacts
+  columns: 姓名, 公司, 职位
+  sort: 重要度 desc
+
+  服务员（MarkdownPostProcessor）把它翻译成...同样的菜单格式：
+
+  const 点菜 = parseMarkdownCodeBlock(...)  // → { table: 'contacts', columns: 
+  [...], sort: [...] }
+  const vm = new TableViewModel(点菜)       // 和上面的 vm 一模一样的构造方式
+
+  关键点：厨房没变、菜单格式没变、ViewModel
+  没变。变的只是"谁来递菜单"。现在我们把接口设计成接受这份菜单，以后谁递都行。
+
+  而 Option B 的问题在于：它让厨房直接理解"食客的原话"，跳过了翻译这一步。这反而
+  把厨房绑死在了那个沟通方式上。
+
+  一句话总结 C：ViewModel 接受一个纯数据配置对象（JSON
+  结构），不关心配置来源于代码还是
+  Markdown。现在先写代码构造，但不堵死以后声明式这条路。
+
+✻ Churned for 15s
+
+> 我希望用户可以自定义视图，比如可以选择哪些字段哪些列。视图可以声明。          
+
+  Thought for 4s (ctrl+o to expand)
+
+● 明白了。那就不是"以后再说"，而是要在当前阶段就把声明式定义纳入设计。
+
+  重新调整选项：
+
+  ---
+  问题 4（修正）：视图定义方式
+
+  用户可以在 Markdown 中声明视图，也可以自定义哪些字段/列可见。三种实现路径：
+
+  - A — 纯声明式：用户在 .md
+  文件中写代码块定义视图，引擎解析后渲染。这是唯一入口。
+
+  ```mddb-table
+  table: contacts
+  columns: 姓名, 公司, 职位, 重要度
+  sort: 重要度 desc
+  ```
+  - B（推荐） — 声明式定义 + 运行时配置 API：声明式代码块是常用入口，同时
+  ViewModel 暴露配置方法让用户通过
+  UI（列选择器、排序点击、过滤器控件）在运行时修改配置。两者共享同一个 Config
+  对象。
+
+  用户写 mddb-table 块（初始定义）
+    → 解析为 TableConfig 对象
+    → TableViewModel 持有该 config
+    → 用户在表格 UI 上点列头排序、勾选/取消列、添加过滤
+    → TableViewModel.setSort() / setColumns() / setFilter()
+    → 内部修改 config → 重新查询 → 刷新渲染
+    → 用户可选：保存当前配置（写回 Markdown 块）
+  - C — 运行时 API 
+  为主：视图由插件代码创建，声明式仅作为"快捷创建"辅助入口。列选择等 UI 操作通过
+  ViewModel 方法实现。
+
+  你倾向哪种？
+
+✻ Cooked for 15s
+
+> 同意B                                                                         
+  Thought for 6s (ctrl+o to expand)
+
+● 已定。现在具体到语法层面。
+
+  ---
+  问题 5：表格视图的声明式代码块语法
+
+  用户写代码块定义表格。要考虑：支持哪些配置项、是否复用已有的 @
+  指令风格、配置和数据的物理关系。三种思路：
+
+  - A — YAML 风格块：清晰的键值对结构，与 Obsidian frontmatter 风格一致。
+
+  ```mddb-table
+  table: contacts
+  columns:
+    - 姓名
+    - 公司
+    - 职位
+    - 重要度
+  sort:
+    - field: 重要度
+      dir: desc
+  filter:
+    重要度: 高
+  page-size: 20
+  ```
+  - B — 简洁行风格：单行关键配置，贴近 Markdown 的"可读性优先"哲学。
+
+  ```mddb-table
+  from contacts
+  show 姓名, 公司, 职位, 重要度
+  sort by 重要度 desc
+  where 重要度 = 高
+  limit 20
+  ```
+  - C（推荐） — 混合：元数据用 YAML + 数据行保留 B 形式。表格定义与解析管道中
+  Schema 定义的 @ 指令风格不同，但视图定义的 YAML 格式与 Obsidian
+  生态自然契合。当视图需要内联数据时，用 --- 分隔元数据和数据区。
+
+  ```mddb-table
+  table: contacts
+  columns: [姓名, 公司, 职位, 重要度]
+  sort: [{field: 重要度, dir: desc}]
+  filter:
+    logic: and
+    conditions:
+      - {field: 重要度, op: '=', value: 高}
+  page-size: 20
+  ```
+
+  你倾向哪种？哪种是普通用户（非程序员）更容易写的？
+
+✻ Sautéed for 17s
+
+> C没看懂，倾向于B                                                              
+
+  Thought for 11s (ctrl+o to expand)
+
+● B 确实最直观。顺着这个方向，有一个细节需要决定：
+
+  ---
+  问题 6：where 行如何处理嵌套 AND/OR 条件？
+
+  FilterGroup 在查询引擎中支持递归树结构（AND (A OR B) AND 
+  C）。但简洁风格下嵌套写起来别扭。两种取舍：
+
+  - A — 扁平 where，不支持嵌套：覆盖 90% 场景，所有条件同级 AND。复杂嵌套走编程
+  API。
+
+  from contacts
+  show 姓名, 公司, 职位
+  where 重要度 = 高, 公司 = 腾讯
+  - 等价于 WHERE 重要度 = 高 AND 公司 = 腾讯
+  - B — 支持 OR 分组：允许多个 where 行，同一行内逗号 = AND，多行 = OR。
+
+  from contacts
+  show 姓名, 公司, 职位
+  where 重要度 = 高, 公司 = 腾讯
+  where 重要度 = 高, 公司 = 字节
+  - 等价于 WHERE (重要度 = 高 AND 公司 = 腾讯) OR (重要度 = 高 AND 公司 = 字节)
+
+  你倾向哪种？
+
+✻ Brewed for 19s
+
+> A                                                                             
+
+  Thought for 10s (ctrl+o to expand)
+
+● 简洁语法确定。现在到渲染层面。
+
+  ---
+  问题 7：表格块的渲染方式
+
+  用户写了  ```mddb-table 块后，这个块在 Obsidian
+  中如何变成可见的表格？两种路径：
+
+  - A — 代码块替换（推荐）：通过 Obsidian 的 MarkdownPostProcessor 拦截
+  mddb-table 代码块。阅读模式下将整个代码块替换为渲染好的 DOM 表格。实时预览模式
+  下也同样替换。原始代码块内容仅在编辑模式下可见（用户点进代码块编辑）。
+
+  this.registerMarkdownCodeBlockProcessor('mddb-table', (source, el, ctx) => {
+    const config = parseTableBlock(source)
+    const vm = new TableViewModel(config)
+    el.replaceWith(renderTable(vm))  // 渲染为 DOM
+  })
+  - B — 侧边栏/独立面板：代码块仅作为引用标记（类似 Dataview 的 inline
+  查询），实际的表格渲染在独立的面板或侧边栏中。代码块本身只显示一行"点击查看表
+  格"的链接。
+
+  你倾向哪种？
+
+✻ Brewed for 20s
+
+> A                                                                             
+
+  Thought for 9s (ctrl+o to expand)
+
+● 表格渲染方式确定。现在到编辑交互——
+
+  ---
+  问题 8：表格视图的编辑模式
+
+  用户在表格中看到数据后，怎么编辑？
+
+  - A — 行内编辑（推荐）：单元格可点击进入编辑态。适用简单字段（文本、数字、枚举
+  下拉）。复杂字段（日期选择器、ref 关联选择）弹出浮层。
+
+  阅读态：  | 张三 | 腾讯 | 产品总监 |
+  点击"腾讯"：| 张三 | [____腾讯____] | 产品总监 |   ← 输入框
+  失焦/Enter → 保存
+  - B — 弹窗/侧边栏编辑：双击行 → 弹出编辑表单（类似 Notion 的 "Open as
+  page"）。表格本身只读。编辑在弹出视图中完成，保存后关闭。
+  - C — 混合：简单字段行内编辑 + "展开编辑"按钮打开完整表单（复用
+  FormViewModel）。行内处理 80% 的快速修改，复杂修改进表单。
+
+  你倾向哪种？
+
+✻ Cooked for 18s
+
+> A                                                                             
+
+  Thought for 16s (ctrl+o to expand)
+● 表格编辑交互确定。现在到写入行为——
+
+  ---
+  问题 9：行内编辑的保存时机
+
+  用户在表格单元格中改了一个值，什么时候写回引擎/文件？
+
+  - A — 即时自动保存（推荐）：每次单元格编辑完成（失焦或 Enter）→ 立即调
+  vm.updateCell() → 引擎写穿到文件 → 其他订阅方收到
+  data-changed。用户无需手动保存。
+
+  编辑 → 失焦 → 自动保存 → 状态栏瞬间提示 "已保存" → UI 保持最新
+  失败 → 单元格恢复原值 + 状态栏提示错误
+  - B — 
+  批量手动保存：编辑仅在内存中累积（单元格变色标记脏），用户点击"保存"按钮或按
+  Ctrl+S 时统一提交。类似表格软件的保存模型。
+
+  编辑 N 个单元格 → 所有脏单元格高亮 → 点"保存" → 批量事务提交
+  放弃编辑 → 点"取消" → 所有修改回滚
+  - C — 可配置：视图定义中声明 auto-save: true/false，两种模式都支持。
+
+  你倾向哪种？
+
+✻ Sautéed for 26s
+
+> A                                                                             
+
+  Thought for 10s (ctrl+o to expand)
+
+● 连续 9
+  个决策都很快达成一致。现在要把"用户可以选择哪些字段哪些列"这个需求落地——
+
+  ---
+  问题 10：表格的列显示控制
+
+  列的可见性由两个来源合并：声明式的初始定义 + 运行时 UI 调整。
+
+  - A — 列选择器下拉：表头上方或工具栏有"列"按钮，点击弹出多选下拉，勾选/取消列
+  。初始值来自 show 行，不写 show 时默认全部列。
+
+  [ 列 ▾ ]                        ← 点击
+    ☑ 姓名
+    ☑ 公司
+    ☐ 职位                        ← 取消勾选 → 该列隐藏
+    ☑ 重要度
+  - B — 列头右键菜单：右键列头弹出菜单，可以"隐藏此列"或"显示所有列"。隐藏后通过
+  工具栏"恢复默认列"按钮找回。
+  - C（推荐） — A + B 
+  结合：工具栏有列选择器（主要入口），同时支持右键列头快捷隐藏。
+
+  你倾向哪种？
+
+✻ Cooked for 20s
+
+> C                                                                             
+
+  Thought for 10s (ctrl+o to expand)
+
+● 已定。表格视图的核心决策基本覆盖。在继续表单视图之前，让我快速汇总一下已有的决
+  策：
+
+  ┌─────┬───────────┬───────────────────────────────────────────────────────┐
+  │  #  │  决策项   │                         结论                          │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 1   │ 交互模式  │ BaseViewModel + 视图 ViewModel 继承                   │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 2   │ 分层      │ Base 公共（查询/过滤/排序/CRUD/事件/分页），子类特有  │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 3   │ 事件系统  │ 通用事件总线，on(type, cb) + off(type, cb)            │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 4   │ 视图定义  │ 声明式代码块 + 运行时配置 API                         │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 5   │ 声明语法  │ 简洁行风格（B）：from / show / sort by / where /      │
+  │     │           │ limit                                                 │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 6   │ WHERE     │ 扁平 AND，不支持嵌套 OR                               │
+  │     │ 条件      │                                                       │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 7   │ 渲染方式  │ 代码块替换（MarkdownPostProcessor）                   │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 8   │ 编辑模式  │ 行内编辑                                              │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 9   │ 保存时机  │ 即时自动保存（失焦/Enter）                            │
+  ├─────┼───────────┼───────────────────────────────────────────────────────┤
+  │ 10  │ 列控制    │ 列选择器下拉 + 右键隐藏                               │
+  └─────┴───────────┴───────────────────────────────────────────────────────┘
+
+  ---
+  现在进入表单视图。第一个问题：
+
+  问题 11：表单视图的打开场景
+
+  表单视图有两种典型的触发场景：
+
+  - A（推荐） — 场景分层：日常的单个字段快速修改通过表格行内编辑完成（已在问题 8
+  确定）。表单视图用于以下场景：
+    - 新增记录：表格工具栏"+"按钮 → 表单弹窗
+    - 完整编辑：表格行的"编辑详情"按钮（右键/行末）→ 表单弹窗
+    - 独立表单块：用户可在 Markdown 中声明 mddb-form
+  代码块，作为独立的数据录入入口（类似 Notion 的表单视图）
+  - B — 所有编辑统一走表单：表格始终只读，双击行 →
+  表单弹窗编辑。行内编辑不做，简化交互路径。
+
+  你倾向哪种？
+
+✻ Cooked for 22s
+
+> A                                                                             
+
+  Thought for 5s (ctrl+o to expand)
+
+● 已定。现在到表单的声明式语法——
+
+  ---
+  问题 12：mddb-form 块声明语法
+
+  沿用表格的简洁行风格，表单需要指定：数据表、哪些字段可见、是否可编辑、初始值。
+  同样两种思路：
+
+  - A（推荐） — 全量字段默认 + 可裁剪：不写 fields 时表单展示所有字段，写 fields
+  时只展示指定字段。
+
+  ```mddb-form
+  to contacts
+  fields 姓名, 公司, 职位, 电话
+  mode new
+  ```
+  - B — 分组 + 字段属性：支持字段分组、标记必填/只读。
+
+  ```mddb-form
+  to contacts
+  group 基本信息
+    show 姓名, 公司, 职位
+  group 联系方式
+    show 电话, 邮箱
+  mode new
+  ```
+
+  你倾向哪种？mode 的取值？（例如 new 新增 / edit 编辑 / view 只读）
+
+✻ Churned for 14s
+
+> A                                                                             
+
+  Thought for 5s (ctrl+o to expand)
+
+● 已定。接着跟进一下刚才提到的——
+
+  问题 13：表单的 mode 模式
+
+  表单视图在不同场景下行为不同：
+
+  - new — 新增模式：所有字段空白，提交时 engine.insert()
+  - edit — 编辑模式：加载已有记录的当前值，可修改，提交时 engine.update()
+  - view — 只读模式：显示记录值，字段不可编辑（展示/详情页用途）
+
+  mddb-form 块中：
+
+  to contacts
+  fields 姓名, 公司, 职位
+  mode new
+
+  这三种模式够用吗？还是需要加入第四种（例如 inline 嵌入到文档流中的迷你表单）？
+
+✻ Crunched for 12s
+
+> 这三种模式的场景                                                              
+  Thought for 4s (ctrl+o to expand)
+
+● mode: new — 用户在 Markdown
+  中放一个表单块，作为快速录入入口。打开笔记就能填，不用进表格再点"+"。
+
+  # 我的 CRM
+
+  下面是新加联系人的快捷入口：
+
+  ```mddb-form
+  to contacts
+  fields 姓名, 公司, 职位, 电话
+  mode new
+
+  （填完提交 → 数据写入 contacts 表 → 下面的 contacts 表格自动刷新）
+
+  **`mode: edit`** — 表格中看到的某条记录不完整或需要批量修改多个字段，点"编辑详
+  情"打开表单弹窗，此时表单的 FormViewModel 加载该记录已有的值。
+
+  表格中右键某行 → "编辑详情" → 弹出浮层：
+    姓名: [张三]
+    公司: [腾讯]          ← 加载的当前值
+    职位: [产品总监]
+    电话: [           ]   ← 原来没填，现在补上
+    提交 → engine.update()
+
+  **`mode: view`** — 纯展示，不用来编辑。当表格列太多一行看不完时，给用户一个干
+  净的详情页。或者嵌入文档中作为"名片"展示。
+
+  ```markdown
+  张三是我们的重点联系人：
+
+  ```mddb-form
+  to contacts
+  fields 姓名, 公司, 职位, 电话, 邮箱, 备注
+  mode view
+  where 姓名 = 张三
+  （字段只读，无编辑功能）
+
+  `new` 和 `view` 可由用户直接在 Markdown 中声明块使用。`edit` 主要由程序触发（
+  从表格/其他视图打开弹窗）。三种模式覆盖了数据录入、数据修改、数据展示三个场景
+  。
+
+  你同意这三种模式吗？
+
+✻ Worked for 17s
+
+> 同意                                                                          
+
+  Thought for 11s (ctrl+o to expand)
+
+● 表单模式确定。现在到生命周期——
+
+  ---
+  问题 14：ViewModel 和视图的生命周期
+
+  一个 mddb-table 或 mddb-form 代码块被渲染到 DOM
+  后，它不会一直存在。用户切换笔记、关闭
+  Obsidian、或文件被删除。生命周期怎么管？
+
+  - A（推荐） — 绑定代码块生命周期：ViewModel 的生命与对应的 Markdown
+  代码块绑定。MarkdownPostProcessor 渲染时创建 ViewModel，Obsidian
+  卸载该代码块时调用 vm.dispose()（释放订阅、清理事件、标记不可用）。
+
+  渲染阶段：           活跃阶段：            销毁阶段：
+  parseConfig()    →  vm 可查询/可编辑   →  MarkdownPostProcessor
+  new ViewModel()     订阅活跃             调用 vm.dispose()
+  render(vm)          事件正常传播          退订全部事件
+                                          释放 SQLite 引用
+  - B — 全局 ViewModel 池：ViewModel 不随代码块销毁而销毁。查找表 Map<tableName,
+  ViewModel> 全局存在，代码块渲染时从池中取，卸载时只断开 UI 连接不销毁
+  ViewModel。下次打开同一表直接复用。
+  - C — 混合：BaseViewModel 的数据层（查询/缓存/订阅）全局池化，视图层（UI
+  状态如列可见性、排序选择）随代码块生命周期。代码块卸载时只销毁 UI
+  层，数据层保留复用。
+
+  你倾向哪种？
+
+✻ Worked for 24s
+
+> 结合具体场景比如记账来分别说明3种策略                                         
+
+  Thought for 8s (ctrl+o to expand)
+
+● 用记账场景说明三种策略的差异：
+
+  ---
+  场景设定
+
+  用户有三处用到 transactions 表：
+
+  home.md（日常记账页）         reports.md（月度报表）
+  sidebar（全局侧边栏）
+  ┌───────────────────┐      ┌───────────────────┐      ┌────────────────┐
+  │ ```mddb-table      │      │ ```mddb-table      │      │ MDDB合计:       │
+  │ from transactions  │      │ from transactions  │      │ 本月支出 ¥3,200 │
+  │ show 日期,金额,分类 │      │ show 分类,金额      │      │                │
+  │ limit 50           │      │ where 金额 < 0      │      └────────────────┘
+  │ ```                │      │ ```                │
+  │                    │      └───────────────────┘
+  │ ```mddb-form       │
+  │ to transactions    │
+  │ mode new           │
+  │ ```                │
+  └───────────────────┘
+
+  用户在 home.md 的表单里录了一条「-56，餐饮」。
+
+  ---
+  策略 A：绑定代码块生命周期
+
+  录入前：
+    home.md表格的 vm → 查询引擎 → 得到50行数据
+    home.md表单的 vm → 就绪，等待填写
+    reports.md表格的 vm → 查询引擎 → 得到上个月的数据
+    侧边栏的 vm → 查询引擎 → 得到本月合计
+
+  用户切到 reports.md 看报表：
+    home.md 两个代码块被卸载 → 两个 vm.dispose() → 释放在 home.md 的查询结果
+    reports.md 代码块渲染 → 创建新 vm → 查询引擎 → 得到数据
+
+  用户切回 home.md：
+    reports.md 代码块卸载 → vm.dispose()
+    home.md 两个代码块重新渲染 → 重新创建 vm → 重新查询引擎
+
+  结果：每次切换笔记，ViewModel 都被销毁和重建。重新查询很快（数据在内存
+  SQLite），但之前的 UI 状态（滚动位置、展开的列、选中行）全部丢失。
+
+  ---
+  策略 B：全局 ViewModel 池
+
+  启动 Obsidian：
+    → 后台扫描所有 md 文件 → 发现 transactions 表
+    → 创建 transactions 的 BaseViewModel → 放入全局池 Map<table, ViewModel>
+    → 这个 vm 一直在内存中，直到关闭 Obsidian
+
+  home.md 渲染表格：
+    → 从池中取出 transactions 的 vm
+    → 但每个代码块有不同的 show/sort/where → 用谁的状态？
+
+  这里出了矛盾：池中只有一个 transactions 的
+  ViewModel，但三个地方用不同的过滤、列、排序。A 说"显示 50 条最近记录"，B
+  说"只看 6 月"，C 说"只要合计数字"。全局池的单个 ViewModel
+  无法同时满足三个不同查询。
+
+  要么让池存多份（每个代码块一个），但这和策略 A
+  没区别了。要么强制全局共享同一个 ViewModel
+  状态，但三个视图看到的数据就会互相干扰。
+
+  ---
+  策略 C：数据层全局池化 + 视图层随代码块
+
+  启动 Obsidian：
+    → DataLayer 池化（内存缓存，全局一份）：
+        · 查询结果缓存：transactions 的全量 SQLite 数据已经可用
+        · 事件总线：任何位置改 transactions → 广播 data-changed
+        · 格式化器：deciaml/null/ref 处理
+    → UI 层随代码块（每个块独立）：
+        · 自己的 TableConfig（show/sort/where 各不相同）
+
+  home.md 表格 vm：
+    UI 层：config = { limit: 50, sort: 日期 desc }  ← 自己的
+    数据层：从全局事件总线订阅 data-changed           ← 共享的
+
+  home.md 表单 vm：
+    UI 层：config = { mode: 'new', fields: [...] }   ← 自己的
+    数据层：同一个事件总线                              ← 共享的
+
+  用户录入一笔新记录：
+    表单 vm → engine.insert() → 数据层广播 "insert 了一笔"
+    → 同一页的表格 vm 收到 → refresh() → 表格里立刻出现新行
+    → reports.md 还没打开（已卸载），但下次打开时会从数据层拿到最新全量
+
+  用户切到 reports.md：
+    home.md 两个 vm 卸载 → UI 层销毁（排序状态、列选择、滚动位置消失）
+    数据层还在 → 事件总线还在
+    reports.md 表格 vm 创建 → 从数据层拿数据 → 立刻渲染（没延迟）
+
+  ---
+  对比总结
+
+  ┌──────────────┬──────────────────┬────────────┬──────────────────────────┐
+  │              │   A: 随代码块    │ B: 全局池  │  C: 数据层池 + UI 随块   │
+  ├──────────────┼──────────────────┼────────────┼──────────────────────────┤
+  │ 切笔记回来   │ 重新查询         │ 直接复用   │ 直接复用处数据层         │
+  ├──────────────┼──────────────────┼────────────┼──────────────────────────┤
+  │ 不同查询共存 │ ✅ 各自独立      │ ❌         │ ✅ 各自独立              │
+  │              │                  │ 互相冲突   │                          │
+  ├──────────────┼──────────────────┼────────────┼──────────────────────────┤
+  │ 跨视图同步   │ ❌ 卸载后收不到  │ ✅         │ ✅ 事件总线一直在线      │
+  │              │                  │ 一直在线   │                          │
+  ├──────────────┼──────────────────┼────────────┼──────────────────────────┤
+  │ 内存占用     │ 低（卸载即释放） │ 中         │ 中（数据层常驻，UI       │
+  │              │                  │            │ 释放）                   │
+  ├──────────────┼──────────────────┼────────────┼──────────────────────────┤
+  │ 实现复杂度   │ 低               │ 中但矛盾   │ 中                       │
+  └──────────────┴──────────────────┴────────────┴──────────────────────────┘
+
+  建议：C
+
+  记账这个场景的核心需求是：同一份数据，多个视图各自看不同的切片，但一个改了另一
+  个要立刻知道。只有 C 同时满足"视图独立"和"数据同步"。
+
+  你同意 C 吗？
+
+✻ Churned for 40s
+
+> 同意                                                                          
+
+  Thought for 10s (ctrl+o to expand)
+
+● 已定。现在汇总到目前为止的决策：
+
+  ┌─────┬──────────────┬───────────────────────────────────────┐
+  │  #  │     决策     │                 结论                  │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 1   │ 交互模式     │ BaseViewModel + 继承                  │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 2   │ 分层         │ Base 公共层 + 子类特有                │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 3   │ 事件系统     │ on(type, cb) + discriminated union    │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 4   │ 视图定义方式 │ 声明式 + 运行时 API                   │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 5   │ 表格声明语法 │ from / show / sort by / where / limit │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 6   │ WHERE 条件   │ 扁平 AND                              │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 7   │ 渲染方式     │ 代码块替换                            │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 8   │ 编辑模式     │ 行内编辑                              │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 9   │ 保存时机     │ 即时自动保存                          │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 10  │ 列控制       │ 列选择器 + 右键隐藏                   │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 11  │ 表单场景     │ 新增弹窗 / 编辑弹窗 / 独立声明块      │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 12  │ 表单声明语法 │ to / fields / mode                    │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 13  │ 表单模式     │ new / edit / view                     │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 14  │ 生命周期     │ 数据层池化 + UI 层随代码块            │
+  └─────┴──────────────┴───────────────────────────────────────┘
+
+  ---
+  问题 15：视图层的错误展示
+
+  查询失败、写入失败、解析失败 —— 在视图层怎么呈现给用户？
+
+  - A — 状态栏 + 内联提示（推荐）：Obsidian 状态栏显示全局错误计数（已有 Phase
+  14 设计），同时视图组件自身在渲染区域显示内联错误。表格查询失败时表格区显示错
+  误卡片；单元格编辑失败时该单元格恢复原值 + 短暂红色闪烁 + tooltip
+  显示失败原因。
+
+  ┌─────────────────────────────────┐
+  │ ⚠ 查询失败：表 'contacts' 未找到   │  ← 内联错误卡片
+  │ [重试]                           │
+  └─────────────────────────────────┘
+  同时状态栏：MD-DB: 3 tables, 1 error
+  - B — 
+  静默降级：错误不弹给用户，视图显示空状态或最后已知数据。错误仅写入日志文件。
+  - C — Obsidian Notice：使用 Obsidian 原生的 new Notice()
+  弹出短暂通知。视图组件自身不显示错误。
+
+  你倾向哪种？
+
+✻ Cooked for 22s
+
+> A                                                                             
+  Thought for 7s (ctrl+o to expand)
+
+● 已定。现在到表单视图的字段渲染——
+
+  ---
+  问题 16：表单字段控件 → 字段类型映射
+
+  Schema 定义了 12 种字段类型。在表单 mode: new/edit
+  中，每种类型应该对应什么输入控件？
+
+  string   → text input
+  integer  → number input
+  boolean  → toggle/checkbox
+  date     → date picker
+  email    → email input
+  tags     → tag input（输入框 + 标签展示）
+  enum     → dropdown/select
+  ref      → relation picker（搜索目标表记录）
+  text     → textarea（多行）
+  phone    → phone input
+  decimal  → number input（带精度）
+  datetime → datetime picker
+
+  - A（推荐） — 按类型自动映射：表单根据 Schema.types
+  自动选择控件。用户无需在声明中指定控件类型。对 90% 场景够用。
+  - B — 允许覆盖：fields 行可以附带控件类型提示：
+
+  to contacts
+  fields 姓名[text], 备注[textarea], 重要度[select]
+  mode new
+
+  你倾向哪种？
+
+✻ Baked for 16s
+
+> A                                                                             
+
+  Thought for 12s (ctrl+o to expand)
+
+● 已定。接着表单的提交流程——
+
+  ---
+  问题 17：表单提交后的行为
+
+  用户在表单中填写完数据，点击提交后的两个选择：
+
+  - A — 关闭 + 刷新关联视图：提交成功 → 表单弹窗关闭 → 触发 data-changed 事件 →
+  同一页面的表格自动刷新显示新记录。简洁，适合弹窗场景。
+
+  新增记录：填完提交 → 弹窗消失 → 表格多了一行
+  编辑记录：改完提交 → 弹窗消失 → 表格该行已更新
+  - B — 清空表单留在原地：提交成功 → 表单字段清空 → 表单保持打开 →
+  状态栏提示"已保存"。适合连续录入场景（如一口气记 5 笔账）。
+
+  记第1笔 → 提交 → 清空 → 继续记第2笔 → 提交 → 清空 → ...
+  - C（推荐） — 两种都支持，按场景切换：
+    - 弹窗模式（表格触发的新增/编辑）→ 提交后关闭弹窗（A）
+    - 独立块模式（mddb-form 声明）→ 可配置 keep-open: true
+  连续录入（B），默认关闭
+
+  你倾向哪种？
+
+✻ Sautéed for 22s
+
+> C                                                                             
+
+  Thought for 11s (ctrl+o to expand)
+
+● 已定。现在看还有哪些缺口。汇总一下当前进度：
+
+  ┌─────┬──────────────┬───────────────────────────────────────┐
+  │  #  │     决策     │                 结论                  │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 1   │ 交互模式     │ BaseViewModel + 继承                  │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 2   │ 分层         │ Base 公共层 / 子类特有                │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 3   │ 事件系统     │ on(type, cb) + discriminated union    │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 4   │ 视图定义     │ 声明式 + 运行时 API                   │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 5   │ 表格声明语法 │ from / show / sort by / where / limit │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 6   │ WHERE        │ 扁平 AND                              │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 7   │ 渲染         │ 代码块替换                            │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 8   │ 编辑模式     │ 行内编辑                              │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 9   │ 保存时机     │ 即时自动保存                          │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 10  │ 列控制       │ 下拉 + 右键                           │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 11  │ 表单场景     │ 弹出 + 独立块                         │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 12  │ 表单语法     │ to / fields / mode                    │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 13  │ 表单模式     │ new / edit / view                     │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 14  │ 生命周期     │ 数据层池化 + UI 随块                  │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 15  │ 错误展示     │ 状态栏 + 内联                         │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 16  │ 表单控件     │ 按类型自动映射                        │
+  ├─────┼──────────────┼───────────────────────────────────────┤
+  │ 17  │ 提交行为     │ 弹窗关闭 / 独立块可配持续录入         │
+  └─────┴──────────────┴───────────────────────────────────────┘
+
+  ---
+  问题 18：运行时配置变更是否写回 Markdown 块？
+
+  用户在表格 UI
+  上改了列排序、列可见性、过滤条件后，代码块里的声明语句是否自动更新？
+
+  - A（推荐） — 不自动写回，内存持有：运行时状态仅存在于 ViewModel 内存中。刷新
+  页面或切换笔记后恢复代码块的原始声明。用户如果想持久化，手动编辑代码块。
+
+  代码块写：show 姓名, 公司
+  用户勾选显示"职位" → 表格多了一列 → 仅内存生效
+  关闭重开 → 恢复为 show 姓名, 公司 的状态
+  - B — 自动写回代码块：用户调整列排序/过滤/列选择 → 自动修改对应的 show / sort 
+  by / where 行。下次打开看到的是上次调整后的状态。
+  - C — 
+  用户手动保存：视图工具栏有"保存视图"按钮，点后写回代码块。不点就不持久化。
+
+  你倾向哪种？
+
+✻ Crunched for 23s
+
+> B                                                                             
+
+  Thought for 10s (ctrl+o to expand)
+
+● 已定。提到连续写入要小心一个点：用户快速连续点列头排序会有多次写文件。实现时加
+  防抖（debounce 300ms 左右）即可。
+
+  ---
+  问题 19：表单提交前的客户端校验
+
+  FormViewModel 在调 engine.insert/update 之前是否做前置校验？哪些校验？
+
+  - A — 仅类型校验：校验输入的字符串能否成功转为目标字段类型（如 integer 字段填
+  "abc" 当场标红提示）。这是类型转换器已有逻辑的复用。
+  - B（推荐） — 类型 + 必填 + 格式：在 A 基础上加上：
+    - 必填检查：@required 字段为空 → 标红 + 提示"此项必填"
+    - 格式检查：email 格式不合法 → 标红
+    - 唯一性不用检查（提交后由引擎的 PK 冲突处理）
+
+  姓名: [________] ← 红色边框 + "此项必填"
+  邮箱: [abcde___] ← 红色边框 + "邮箱格式无效"
+  金额: [xyz_____] ← 红色边框 + "请输入数字"
+  - C — 全量校验：类型 + 必填 + 格式 + PK 唯一性（预查绑定表）+ ref
+  引用存在性。全部在客户端完成，确保提交一定成功。
+
+  你倾向哪种？
+
+✻ Worked for 22s
+
+> C                                                                             
+
+  Thought for 13s (ctrl+o to expand)
+
+● 已定。这 19 个决策覆盖了视图层的核心架构和表格/表单的主要交互。让我梳理一下还
+  有哪些缺口需要讨论：
+
+  ---
+  剩余待讨论项：
+
+  1. 表格 CRUD 操作入口：新增行、删除行的 UI 入口和流程
+  2. 排序交互：列头点击排序的行为（单列 / 多列 / 取消排序）
+  3. 撤销机制：行内编辑后是否有撤销
+  4. 代码块冲突：运行时配置自动写回代码块时，如果用户同时手动编辑了代码块怎么办
+  5. 依赖关系：ViewModel 创建时需要的引擎/服务注入方式
+
+  继续吗？还是你觉得现有的 19 个决策已经可以出设计文档了？
+
+✻ Worked for 21s
+
+> 继续讨论，分步进行                                                            
+  Thought for 3s (ctrl+o to expand)
+
+● 好的，继续。先从表格的 CRUD 操作入口开始——
+
+  ---
+  问题 20：表格新增行的 UI 入口
+
+  用户在表格视图想加一条新记录，通过什么入口触发？
+
+  - A — 工具栏按钮 + 
+  弹出表单：表格上方工具栏有"+"按钮，点击弹出表单弹窗（FormViewModel, mode: 
+  new）。填写完提交 → 弹窗关闭 → 表格自动刷新显示新行。
+
+  ┌─────────────────────────────────────────┐
+  │ [+ 新增] [列 ▾] [排序 ▾]                │  ← 工具栏
+  ├─────────────────────────────────────────┤
+  │ 姓名  │ 公司   │ 职位      │            │
+  │ 张三  │ 腾讯   │ 产品总监  │ [编辑详情]  │
+  │       │        │          │            │
+  └─────────────────────────────────────────┘
+  点[+ 新增] → 弹出表单 → 提交 → 新行出现在表格中
+  - B — 表格末行内联新增：表格最后一行始终有一个空白行（placeholder），点击即可
+  直接输入。类似 Airtable/Notion 的"表格底部空白行"。
+
+  │ 张三  │ 腾讯   │ 产品总监  │
+  │       │        │          │  ← 空白行，点击开始输入
+  - C（推荐） — 
+  两者都有：工具栏"+"按钮打开完整表单（适合字段多、需要校验的场景）；表格底部空
+  行支持快速录入（适合字段少、连续录入的场景，复用行内编辑管道逐字段提交）。
+
+  你倾向哪种？
+
+✻ Worked for 13s
+
+> C                                                                             
+
+  Thought for 8s (ctrl+o to expand)
+
+● 已定。接着删除操作——
+
+  ---
+  问题 21：表格删除行的 UI 入口
+
+  - A — 右键菜单删除：右键行 → 弹出菜单 → "删除"。最安全，不易误触。
+
+  右键某行 → ┌──────────┐
+            │ 编辑详情   │
+            │ 删除       │  ← 点击后弹出确认
+            └──────────┘
+  - B — 行末删除按钮：每行末尾有删除图标（🗑），点击即删。操作快捷但有误触风险。
+  - C（推荐） — 
+  两者都有：右键可删，行末悬停显示删除按钮。都弹出确认对话框（"确定删除
+  [张三]？"），防止误触。按钮仅在悬停时显示，平时隐藏保持界面干净。
+
+  你倾向哪种？
+
+✻ Cooked for 15s
+
+> 在第1列前面加操作按钮，点击菜单栏： 编辑，删除，向上插入，向下插入            
+
+  Thought for 8s (ctrl+o to expand)
+
+● 好的，这个设计很清晰：行首操作按钮（类似 Notion 的行手柄），点击弹出操作菜单。
+
+  ┌────┬────────┬────────┬──────────┐
+  │ #  │ 姓名    │ 公司    │ 职位     │
+  ├────┼────────┼────────┼──────────┤
+  │ ⠿  │ 张三    │ 腾讯   │ 产品总监 │  ← 点⠿弹出菜单：
+  │ ⠿  │ 李四    │ 字节   │ 架构师   │      编辑
+  │ ⠿  │ 王五    │ 创投   │ 合伙人   │      删除
+  │    │        │        │          │      向上插入
+  └────┴────────┴────────┴──────────┘      向下插入
+
+  接下来——
+
+  问题 22：排序交互
+
+  用户点击列头的排序行为：
+
+  - A — 三态循环：点击列头 → 升序 → 再点 → 降序 → 再点 →
+  取消排序（恢复默认）。每次只排一列。
+
+  点击"金额"列头 → 升序 ▲
+  再点 → 降序 ▼
+  再点 → 恢复默认排序
+  点另一列"日期" → 切换排序列，金额取消排序
+  - B（推荐） — 多列排序：类似
+  Excel/Notion。默认点击替换排序（单列），但用户可以通过
+  Shift+点击或菜单添加排序列。
+
+  点"日期" → 按日期排序
+  Shift+点"金额" → 按日期优先、金额次之排序
+  列头显示排序序号：日期①▲ 金额②▼
+
+  你倾向哪种？
+
+✻ Churned for 20s
+
+> B                                                                             
+
+  Thought for 3s (ctrl+o to expand)
+
+● 已定。接下来——
+
+  问题 23：行内编辑的撤销机制
+
+  你在问题 9 选了即时自动保存（失焦即写）。如果用户误改了一个单元格，怎么撤销？
+
+  - A — 手动恢复：没有内置撤销。用户改了就是改了，想恢复需要手动重新编辑。理由：
+  数据层有 git（如果用户启用了 git 同步），可以通过 git diff 找回旧值。
+  - B — Ctrl+Z 撤销：Ctrl+Z 回退上一次单元格编辑（engine.update 的反操作：再
+  update 回旧值）。只保持最近 1 次操作的旧值，不维护完整 undo 栈。
+  - C（推荐） — undo 栈：内存中维护最近 N 次操作（默认 50），Ctrl+Z
+  逐次回退。每次都调 engine.update
+  写入文件（不是只在内存中撤消），保持文件始终是最终状态。
+
+  改"公司"为"腾讯" → 改"职位"为"总监" → 改"电话"为"138..."
+  Ctrl+Z → "电话"恢复旧值 → Ctrl+Z → "职位"恢复旧值 → ...
+
+  你倾向哪种？
+
+✻ Crunched for 13s
+
+> 撤销机制可以进待办清单，目前不想复杂化。                                      
+
+  Thought for 5s (ctrl+o to expand)
+
+● 好的，撤销机制进待讨论清单，当前不做。
+
+  ---
+  问题 24：运行时配置自动写回代码块时的并发冲突
+
+  你在问题 18 选了自动写回代码块（用户调整列/排序/过滤 →
+  自动更新代码块内容）。但存在一个竞争：用户在调整排序列头的同时，也可能在编辑模
+  式下手动编辑这个代码块。
+
+  - A — 覆盖上次写入结果：自动写回通过 app.vault.process()
+  修改文件，和用户手动编辑走同一通道。Obsidian
+  对同一文件的多方修改会触发合并或冲突提示。引擎不额外处理，交给 Obsidian
+  原生行为。
+  - B — 检测编辑模式不写回：通过 MarkdownPostProcessor 的上下文判断当前代码块是
+  否处于编辑态（光标在块内），编辑态时不自动写回，仅内存生效。离开编辑态后再写。
+  - C — 始终不写回编辑中的块：更简单 —— 如果代码块在实时预览模式下被用户修改过（
+  脏），就暂停自动写回，直到用户手动触发"同步视图"或重新打开笔记。
+
+  你倾向哪种？
+✻ Cooked for 15s
+
+> 分析建议                                                                      
+
+  Thought for 3s (ctrl+o to expand)
+
+● 场景还原
+
+  用户正在看 contacts 表格：
+
+    ```mddb-table
+    from contacts
+    show 姓名, 公司, 职位
+    sort by 重要度 desc
+
+  1. 用户点列头"公司"排序 → 代码块应该变成 sort by 公司 asc
+  2. 同一时刻，用户光标在代码块里编辑 show 行，想加一列 → 冲突
+
+  ---
+
+  **Option A（依赖 Obsidian 原生合并）的问题**
+
+  `app.vault.process()` 是"读文件 → 改内容 → 写文件"的原子操作。如果用户正在编辑
+  模式下改代码块内容，写回还没保存（还在编辑器中），`process()`
+  读到的文件内容是旧版本。写回成功但覆盖了用户未保存的手动编辑。结果是用户的手动
+  改动丢失，这是最差的用户体验。
+
+  **Option B（检测编辑态）的问题**
+
+  `MarkdownPostProcessor` 能知道当前块是否在"阅读视图"还是"实时预览"。但无法精准
+  判断用户光标是否在代码块内。这个判断依赖内部 API，容易在不同 Obsidian
+  版本间行为不一致。且"离开编辑态后再写"的时机难以确定 ——
+  用户可能改一半去喝咖啡，文件一直不保存。
+
+  **Option C（脏检测暂停）最安全**
+
+  ```typescript
+  // 简单逻辑：
+  if (block被用户手动编辑过 && 写入尚未发生) {
+    暂停自动写回
+    内存中持有最新配置（表格排序/过滤生效）
+  }
+  // 等到下一次代码块重新渲染时（用户切走再切回来），以文件中的声明为准
+
+  实际上这里的"冲突"只在一种情况下发生：用户同时通过 UI 调整配置 + 
+  又在手动编辑代码块。这在日常使用中几乎不会发生 —— 用户要么在 UI
+  上操作表格，要么在编辑代码块，不会同时做。C 给了最安全的兜底：如果真发生了，UI
+  配置只在内存生效，不写入文件，避免覆盖用户的手动编辑。
+
+  建议：B（简化版） — 不检测"编辑态"，而是在自动写回前做一次简单判断：代码块的内
+  容是否在最近的自动写回之后被外部改动过（与上次写回后缓存的内容比对）。如果一致
+  → 安全写回。如果不一致（用户手动改过）→
+  跳过本次写回，仅在内存生效。这样无需依赖 Obsidian 编辑态 API，实现简单且安全。
+
+  你同意这个方案吗？
+
+✻ Cooked for 20s
+
+> 同意                                                                          
+
+  Thought for 17s (ctrl+o to expand)
+
+● 已定。接着——
+
+  问题 25：ViewModel 如何获取引擎/服务引用
+
+  ViewModel 需要 QueryEngine、CRUD 接口、事件总线。这些依赖怎么注入？
+
+  - A — 构造函数注入（推荐）：ViewModel 构造时接收服务引用，调用方负责传入。
+
+  class BaseViewModel {
+    constructor(
+      protected engine: Engine,           // CRUD + query
+      protected events: EventBus,          // 全局事件总线
+      protected config: ViewConfig         // 视图配置
+    ) {}
+  }
+
+  // MarkdownPostProcessor 中：
+  const vm = new TableViewModel(engine, events, config)
+  - B — 全局单例访问：服务挂在插件实例下，ViewModel 内部直接通过全局引用获取。
+
+  class BaseViewModel {
+    protected engine = getPlugin().engine   // window.__MDDB__ 或 import
+  }
+  - C — Service Locator 容器：一个轻量的服务容器，ViewModel 从容器中按 key 取。
+
+  class BaseViewModel {
+    protected engine = ServiceLocator.get('engine')
+  }
+
+  你倾向哪种？
+
+✻ Brewed for 26s
+
+> 同意                                                                          
+
+  Thought for 13s (ctrl+o to expand)
+
+● 已定。接着插入行操作——
+
+  问题 26：向上插入 / 向下插入的行为
+
+  用户通过行操作菜单（⠿）选择"向上插入"或"向下插入"后，插入的是什么？
+
+  - A — 
+  空白行内联输入：在目标位置插入一个空白行，用户直接在表格里逐字段输入。类似
+  Airtable/Notion 的插入行行为。
+
+  张三 | 腾讯 | 产品总监
+  ── 插入的空行 ──                     ← 刚插入，光标在第一个单元格
+  李四 | 字节 | 架构师
+  - B — 弹出表单预填默认值：弹出表单弹窗（mode: 
+  new），提交后行插入到目标位置。用户通过完整表单录入。
+  - C（推荐） — 插入位置不同策略不同：向上/向下插入走行内空行（A），因为此时用户
+  刚刚在表格中操作，上下文连续。工具栏"+"按钮走表单弹窗（问题 20 的
+  C），适合字段多的场景。行内插入的行在失焦/Enter时逐字段即时保存。
+
+  你倾向哪种？
+
+✻ Worked for 2m 28s
+
+> C                                                                             
+
+  Thought for 9s (ctrl+o to expand)
+
+● 已定。列表越来越完整了。继续——
+
+  问题 27：表格分页的 UI
+
+  你在问题 5 的语法中已隐含了分页（limit 20）。表格底部怎么展示分页控件？
+
+  - A — 加载更多：底部显示"加载更多"按钮，点一次追加一页。适合浏览型场景。
+
+  ... 20 行 ...
+  ┌────────────────────────┐
+  │    显示 20 / 156      │
+  │    [加载更多]          │
+  └────────────────────────┘
+  - B — 传统分页器：页码按钮 + 上一页/下一页。适合需要跳转的场景。
+
+  [<上一页] 1 2 3 ... 8 [下一页>]  共 156 条
+  - C（推荐） — 滚动自动加载：滚动到表格底部自动加载下一页（无限滚动）。没有显式
+  分页控件，简洁。total 和 hasMore 信息在状态栏或表格底部小字显示。
+
+  滚动到底 → "加载中..." → 追加下一页 → 继续滚动
+  底部小字：已显示 40 / 156
+
+  你倾向哪种？
+
+✻ Crunched for 18s
+
+> C                                                                             
+  Thought for 37s (ctrl+o to expand)
+
+● 好问题。SQLite 查询拿到几百行没问题，但全渲染成 DOM
+  就会卡。虚拟滚动只渲染视口内可见的 ~20 行，其余用占位高度模拟。
+
+  用户看到 20 行，实际 DOM 只有 22-24 行（视口 + 少量缓冲）
+  滚动时回收旧 DOM 节点，渲染新行
+  已显示 40 / 156
+
+  这作为滚动加载的底层实现约束，不是额外决策。设计文档里注明"表格渲染采用虚拟滚
+  动，只渲染视口可见行即可。
+
+  ---
+  问题 28：表单视图的字段布局
+
+  mddb-form 代码块渲染后，字段应该怎么排列？
+
+  - A — 单列纵向排列：字段从上到下依次排列。适合大多数场景，移动端友好，Obsidian
+  笔记宽度天然适合单列。
+
+  姓名:     [________________]
+  公司:     [________________]
+  职位:     [________________]
+  电话:     [________________]
+  - B — 两列并排：两个字段一行，节省空间。适合字段多的场景。
+
+  姓名: [________]  公司: [________]
+  职位: [________]  电话: [________]
+  - C（推荐） — 默认单列，声明式可配：默认竖排排列，声明中可指定 layout: compact
+  切换为紧凑双列。
+
+  ```mddb-form
+  to contacts
+  fields 姓名, 公司, 职位, 电话, 邮箱, 备注
+  layout compact
+  mode new
+  ```
+
+  你倾向哪种？
+
+✻ Baked for 41s
+
+> C                                                                             
+
+  Thought for 32s (ctrl+o to expand)
+
+● 已定。继续——
+
+  问题 29：表视图中"向上插入"和"向下插入"的数据位置
+
+  用户通过行菜单在某行上方或下方插入后，新行写到文件的哪里？
+
+  - A — 追加到文件末尾：无论插入位置在哪，新行始终追加到文件末尾（引擎的 Phase 9
+  已确定"末尾追加"策略）。表格显示的排序顺序由 @sort 或 sort by
+  控制，与文件中的物理位置无关。
+
+  文件中的物理顺序：
+    张三 | 腾讯 | 产品总监      ← 第10行
+    李四 | 字节 | 架构师        ← 第11行
+    新记录 | xxx | xxx          ← 始终追加到末尾
+  - B — 插入到指定物理位置：在文件中对应行的上方或下方插入新行，保持物理顺序与显
+  示顺序一致。但这与引擎的"末尾追加"决策冲突。
+
+  // 需要修改引擎的 CRUD 策略
+  删除后续行 → 插入新行到指定位置 → 更新后续行号
+
+  你的意思应该是 A（末尾追加）。因为引擎已经确定"INSERT = 末尾追加"，排序由
+  @sort 或 sort by 控制。用户在表格中看到"向上插入"后在李四上面出现新行，是因为
+  按排序字段排列的结果，而不是文件物理位置。
+
+  确认一下：你同意 A 吗？
+
+✻ Cogitated for 36s
+
+> 用B，需要修改引擎，要改变物理位置                                             
+
+  Thought for 7s (ctrl+o to expand)
+
+● 明白。这会影响引擎已有的决策。记录一下——
+
+  引擎变更：存储引擎 §8 "插入位置末尾追加" →
+  需要支持指定行号插入。插入行后，后续行物理行号 +1，_binding 表的 line_number
+  需要级联更新。
+
+  这个变更的范围在 Phase 9: CRUD
+  实施时调整，不影响已确定的解析管道和查询引擎设计。
+
+  ---
+  问题 30：插入位置的排序语义
+
+  新行插入到某行的上方或下方后，它显示在表格中的位置由什么决定？
+
+  - A — 暂时插入到物理位置，排序后可能移位：插入时按物理位置显示（在李四前面），
+  但用户下次点列头排序时，新行可能跑到别的位置去。这是因为排序由 sort by
+  控制，不感知"插入意图"。
+  - B — 插入时自动填充排序列的值：如果表格当前按"重要度"排序，向上插入时自动为新
+  行预填一个足够高的重要度值，确保它在排序后保持在目标位置附近。但这引入了"引擎
+  猜用户意图"的复杂性。
+  - C（推荐） — 插入后立即显示在物理位置，排序由用户控制：插入时行的物理位置决定
+  显示顺序（此时忽视 sort by，以文件顺序渲染）。用户点击列头排序后才按排序规则重
+  新排列。这是最直接的行为：物理位置 = 显示位置。
+
+  你倾向哪种？
+
+✻ Sautéed for 20s
+
+> C                                                                             
+
+  Thought for 11s (ctrl+o to expand)
+
+● 已定。继续表单视图的剩余细节——
+
+  问题 31：mddb-form 中 mode: view 的 where 语法
+
+  view 模式需要指定"看谁的详情"。沿用表格的 where 语法：
+
+  to contacts
+  fields 姓名, 公司, 职位, 电话, 邮箱
+  mode view
+  where 姓名 = 张三
+
+  如果 where 匹配多行怎么办？
+
+  - A — 显示第一条匹配记录：只渲染第一条符合条件的记录，忽略后续。简洁。
+  - B — 报错：匹配多条时显示内联错误"匹配到多条记录，请指定更精确的查询条件"。强
+  制用户写精确查询。
+  - C（推荐） — 显示第一条 + 行切换器：初次渲染第一条，同时表单顶部出现"第 1 条
+  / 共 N 条"的行切换器（类似轮播），用户可浏览所有匹配记录。
+
+  ┌─────────────────────────────────┐
+  │ [< 上一条]  1 / 3  [下一条 >]   │ ← 行切换器
+  │                                 │
+  │ 姓名: [张三___________________] │ ← 只读
+  │ 公司: [腾讯___________________] │
+  └─────────────────────────────────┘
+
+  你倾向哪种？
+
+✻ Cogitated for 21s
+
+> C                                                                             
+
+  Thought for 8s (ctrl+o to expand)
+
+● 已定。现在表格和表单的交互基本覆盖完了，需要处理一个贯穿性的问题——
+
+  问题 32：声明式块的解析器放在哪？
+
+  mddb-table 和 mddb-form 代码块都需要把 from / show / sort by / where
+  这些文本行解析为结构化配置对象（TableConfig /
+  FormConfig）。这个解析逻辑应该放在哪？
+
+  - A — ViewModel 自身解析：TableViewModel 和 FormViewModel
+  接受原始文本字符串，内部自己解析。构造签名直接接受 Markdown 代码块内容。
+
+  const vm = new TableViewModel(engine, events, codeBlockContent)
+  // ViewModel 内部：parse(content) → TableConfig → 使用
+  - B（推荐） — 独立 Parser 模块，ViewModel 接受已解析的 Config：解析器和
+  ViewModel 分离。MarkdownPostProcessor 先用 Parser 解析文本 → 得到 Config 对象
+  → 传入 ViewModel。
+
+  // src/view/parser.ts
+  function parseTableBlock(source: string): TableConfig
+  function parseFormBlock(source: string): FormConfig
+
+  // MarkdownPostProcessor 中：
+  registerCodeBlockProcessor('mddb-table', (source, el) => {
+    const config = parseTableBlock(source)
+    const vm = new TableViewModel(engine, events, config)
+    render(vm, el)
+  })
+
+  - 解析器独立可测试，与 ViewModel 无关。Config
+  对象是纯数据，从哪里来都行（文本解析、编程构造、JSON 反序列化）。
+  - C — Parser 作为 BaseViewModel 静态工厂方法：BaseViewModel.fromBlock(source)
+  静态方法，内部解析 + 构造。一半独立一半耦合。
+
+  你倾向哪种？
+
+✻ Cooked for 18s
+> B                                                                             
+
+  Thought for 8s (ctrl+o to expand)
+
+● 已定。解析器独立。现在到渲染层的架构问题——
+
+  问题 33：ViewModel → DOM 的渲染方式
+
+  ViewModel 持有数据和状态，但谁负责产出 DOM？
+
+  - A — ViewModel 直接产出 DOM：ViewModel 有 render(container: HTMLElement)
+  方法，内部操作 DOM 构建和更新。View 和 ViewModel 合二为一。
+
+  class TableViewModel extends BaseViewModel {
+    render(container: HTMLElement) {
+      // 构建 <table>、绑定事件、处理虚拟滚动 —— 全部在 ViewModel 里
+    }
+  }
+  - B — 分离 View 渲染器：ViewModel 只负责数据和状态。独立的 TableView 类接收
+  ViewModel，负责 DOM 渲染和事件绑定。View 订阅 ViewModel 的事件驱动更新。
+
+  class TableView {
+    constructor(private vm: TableViewModel) {}
+    mount(container: HTMLElement) {
+      // 渲染表格 DOM
+      this.vm.on('data-changed', () => this.update())
+    }
+  }
+
+  // MarkdownPostProcessor：
+  const vm = new TableViewModel(engine, events, config)
+  const view = new TableView(vm)
+  view.mount(el)
+  - C — 轻量 render 函数：不用类，用纯函数 renderTable(vm, 
+  container)。每次数据变化时重新调用，依赖虚拟 DOM 或在函数内做增量更新。
+
+  你倾向哪种？
+
+✻ Baked for 17s
+
+> 分析建议                                                                      
+
+  Thought for 13s (ctrl+o to expand)
+
+● Option A 的问题
+
+  TableViewModel 已经承载了很多职责：查询管理、排序/过滤状态、CRUD、事件路由、配
+  置持久化。再把虚拟滚动、DOM 事件绑定、列宽拖拽、内联编辑的 DOM
+  操作塞进去，一个类就过千行了。而且测试 ViewModel 必须在 jsdom 环境中 ——
+  只测一个排序切换逻辑也要启动 DOM 环境。
+
+  Option C 的问题
+
+  纯函数适合无状态的"数据 → DOM"映射。但表格视图有大量交互状态：哪行正在编辑、哪
+  个单元格选中、右键菜单是否打开、虚拟滚动的滚动位置……这些状态放在 render
+  函数外的闭包或全局变量中，本质上又变回了 Class，只是少了 Class 的结构约束。
+
+  Option B 最匹配我们的分层模式
+
+  回顾我们已确定的结构：
+
+  Parser（独立）    Config（纯数据）    ViewModel（数据+状态）
+  View（DOM+交互）
+  ─────────────────────────────────────────────────────────────────────────────
+  parseTableBlock  →  TableConfig  →  TableViewModel        →  TableView
+  (source: string)     (interface)     (查询/排序过滤/CRUD/事件)
+  (虚拟滚动/DOM/事件绑定)
+
+  关键收益：
+
+  - 测试边界清晰：ViewModel 单元测试不碰 DOM。View 单元测试 mock 掉
+  ViewModel，只测 DOM 行为（"点击列头是否触发 vm.setSort()"）。
+  - View 可替换：加看板视图时，KanbanViewModel 继承 Base，KanbanView
+  只需关心卡片布局和拖拽。两者独立开发。
+  - 与 Obsidian 模式一致：MarkdownPostProcessor 负责"何时创建和挂载"，View
+  负责"如何渲染"，ViewModel 负责"数据从哪来"。
+
+  建议：B
+
+  你同意吗？
+
+✻ Brewed for 26s
+
+> 同意                                                                          
+
+  Thought for 12s (ctrl+o to expand)
+
+● 已定。33 个决策了，这已经足够形成一份完整的设计文档。让我接着问几个收尾问题——
+
+  ---
+  问题 34：视图层模块的文件结构
+
+  按已确定的架构，视图层代码怎么组织？
+
+  - A（推荐） — 按职责分层：
+
+  src/view/
+  ├── parser.ts             # parseTableBlock / parseFormBlock
+  ├── base-view-model.ts    #
+  BaseViewModel（查询/CRUD/事件/过滤/排序/分页/格式化）
+  ├── table/
+  │   ├── table-view-model.ts   # TableViewModel extends Base
+  │   ├── table-view.ts         # TableView — DOM 渲染、虚拟滚动、事件绑定
+  │   └── table-config.ts       # TableConfig interface
+  ├── form/
+  │   ├── form-view-model.ts    # FormViewModel extends Base
+  │   ├── form-view.ts          # FormView — DOM 渲染、字段控件映射
+  │   └── form-config.ts        # FormConfig interface
+  ├── shared/
+  │   ├── event-bus.ts          # 全局事件总线
+  │   ├── data-layer.ts         # 数据层池化（缓存、事件路由）
+  │   ├── view-config.ts        # ViewConfig 公共类型
+  │   └── types.ts              # Change、ViewEvent 等公共类型
+  └── integration.ts        # MarkdownPostProcessor 注册、与插件主类集成
+  - B — 按功能分组：所有 ViewModel 放一起，所有 View 放一起，所有 Config
+  放一起。
+
+  src/view/
+  ├── view-models/
+  │   ├── base.ts
+  │   ├── table.ts
+  │   └── form.ts
+  ├── views/
+  │   ├── table.ts
+  │   └── form.ts
+  ├── parsers/
+  │   └── block-parser.ts
+  ├── configs/
+  │   ├── table.ts
+  │   └── form.ts
+  └── shared/
+
+  你倾向哪种？
+
+✻ Churned for 21s
+
+> A                                                                             
+
+  Thought for 7s (ctrl+o to expand)
+
+● 已定。现在到最后一个结构性问题——
+
+  问题 35：integration.ts 如何与插件主类对接
+
+  MarkdownPostProcessor 注册需要在 Obsidian 插件生命周期中完成。integration.ts
+  应该暴露什么？
+
+  - A（推荐） — registerViewLayer(plugin, engine) 单入口函数：
+
+  // integration.ts
+  export function registerViewLayer(plugin: Plugin, engine: Engine): void {
+    const events = new EventBus()
+    const dataLayer = new DataLayer(engine, events)
+
+    plugin.registerMarkdownCodeBlockProcessor('mddb-table', (source, el) => {
+      const config = parseTableBlock(source)
+      const vm = new TableViewModel(engine, events, config)
+      new TableView(vm).mount(el)
+    })
+
+    plugin.registerMarkdownCodeBlockProcessor('mddb-form', (source, el) => {
+      const config = parseFormBlock(source)
+      const vm = new FormViewModel(engine, events, config)
+      new FormView(vm).mount(el)
+    })
+  }
+
+  - main.ts 只需一行：
+  registerViewLayer(this, engine)
+  - B — ViewLayer 类：封装为 ViewLayer 实例，暴露更细粒度的控制方法。
+
+  class ViewLayer {
+    register(plugin: Plugin): void
+    dispose(): void
+    getEventBus(): EventBus
+  }
+
+  你倾向哪种？
+
+✻ Worked for 15s
+
+> A                                                                             
+  Thought for 1m 11s (ctrl+o to expand)
+
+● 全部决策完毕。35 个决策覆盖了架构、表格视图、表单视图的所有核心设计。
+
+  让我汇总完整决策清单，然后出设计文档。
+
+  Thought for 3s (ctrl+o to expand)
+
+● ---
+  视图层设计决策汇总
+
+  架构与分层（1-3）
+
+  ┌─────┬─────────┬──────────────────────────────────────────────────────────┐
+  │  #  │  决策   │                           结论                           │
+  ├─────┼─────────┼──────────────────────────────────────────────────────────┤
+  │ 1   │ 交互模  │ BaseViewModel（公共） + 视图 ViewModel 继承              │
+  │     │ 式      │                                                          │
+  ├─────┼─────────┼──────────────────────────────────────────────────────────┤
+  │ 2   │ 分层原  │ Base：查询/过滤/排序/CRUD/事件/格式化/分页；子类：视图特 │
+  │     │ 则      │ 有逻辑                                                   │
+  ├─────┼─────────┼──────────────────────────────────────────────────────────┤
+  │ 3   │ 事件系  │ on(type, cb) + off(type, cb)，Change 用 discriminated    │
+  │     │ 统      │ union                                                    │
+  └─────┴─────────┴──────────────────────────────────────────────────────────┘
+
+  视图定义方式（4-6）
+
+  ┌─────┬──────────────┬─────────────────────────────────────────────────┐
+  │  #  │     决策     │                      结论                       │
+  ├─────┼──────────────┼─────────────────────────────────────────────────┤
+  │ 4   │ 定义方式     │ 声明式代码块 + 运行时配置 API，共享 Config 对象 │
+  ├─────┼──────────────┼─────────────────────────────────────────────────┤
+  │ 5   │ 表格声明语法 │ from / show / sort by / where / limit           │
+  ├─────┼──────────────┼─────────────────────────────────────────────────┤
+  │ 6   │ WHERE 条件   │ 扁平 AND，多条件逗号分隔，不支持嵌套 OR         │
+  └─────┴──────────────┴─────────────────────────────────────────────────┘
+
+  渲染与生命周期（7, 14, 32-33, 35）
+
+  ┌─────┬──────────────┬────────────────────────────────────────────────────┐
+  │  #  │     决策     │                        结论                        │
+  ├─────┼──────────────┼────────────────────────────────────────────────────┤
+  │ 7   │ 渲染方式     │ MarkdownPostProcessor 代码块替换为 DOM             │
+  ├─────┼──────────────┼────────────────────────────────────────────────────┤
+  │ 14  │ 生命周期     │ 数据层全局池化（事件总线/缓存）+ UI                │
+  │     │              │ 层随代码块创建销毁                                 │
+  ├─────┼──────────────┼────────────────────────────────────────────────────┤
+  │ 32  │ 解析器       │ 独立 Parser 模块（parseTableBlock /                │
+  │     │              │ parseFormBlock），接受 string → Config             │
+  ├─────┼──────────────┼────────────────────────────────────────────────────┤
+  │ 33  │ View 与      │ 分离。ViewModel 管数据+状态，View 管 DOM+交互      │
+  │     │ ViewModel    │                                                    │
+  ├─────┼──────────────┼────────────────────────────────────────────────────┤
+  │ 35  │ 集成入口     │ registerViewLayer(plugin, engine) 单函数           │
+  └─────┴──────────────┴────────────────────────────────────────────────────┘
+
+  表格视图交互（8-10, 20-22, 26-27, 29-30）
+
+  ┌─────┬─────────────┬──────────────────────────────────────────────────────┐
+  │  #  │    决策     │                         结论                         │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 8   │ 编辑模式    │ 行内编辑（单元格点击 → 输入框 → 失焦/Enter 保存）    │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 9   │ 保存时机    │ 即时自动保存（失焦/Enter）                           │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 10  │ 列显示控制  │ 列选择器下拉 + 右键快捷隐藏                          │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 20  │ 新增行入口  │ 工具栏"+"按钮 → 表单弹窗 + 表格底部空行快速录入      │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 21  │ 删除/操作入 │ 行首操作按钮（⠿）→                                   │
+  │     │ 口          │ 弹出菜单：编辑、删除、向上插入、向下插入             │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 22  │ 排序交互    │ 多列排序（默认替换，Shift+点击添加排序列），列头显示 │
+  │     │             │ 排序序号                                             │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 26  │ 插入行行为  │ 向上/向下插入走行内空行（A），工具栏"+"走表单（表单  │
+  │     │             │ 弹窗）                                               │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 27  │ 分页        │ 滚动自动加载（无限滚动）+ 虚拟滚动渲染               │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 29  │ 插入物理位  │ 引擎变更：INSERT 改为指定行号插入（非末尾追加）      │
+  │     │ 置          │                                                      │
+  ├─────┼─────────────┼──────────────────────────────────────────────────────┤
+  │ 30  │ 插入排序    │ 物理位置 = 显示位置，排序由用户手动触发              │
+  └─────┴─────────────┴──────────────────────────────────────────────────────┘
+
+  表单视图交互（11-13, 16-17, 19, 28, 31）
+
+  ┌─────┬───────────────┬───────────────────────────────────────────────────┐
+  │  #  │     决策      │                       结论                        │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 11  │ 表单场景      │ 新增弹窗 / 编辑弹窗 / 独立 mddb-form 声明块       │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 12  │ 表单声明语法  │ to / fields / mode                                │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 13  │ 表单模式      │ new（新增）/ edit（编辑）/ view（只读）           │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 16  │ 字段控件      │ 按 Schema 类型自动映射控件（string→input,         │
+  │     │               │ enum→select, tags→tag input, ...）                │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 17  │ 提交行为      │ 弹窗模式关闭弹窗；独立块模式可配 keep-open: true  │
+  │     │               │ 连续录入                                          │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 19  │ 客户端校验    │ 全量：类型 + 必填 + 格式 + PK 唯一性 + ref        │
+  │     │               │ 引用存在性                                        │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 28  │ 字段布局      │ 默认单列纵向；layout compact 可切换双列           │
+  ├─────┼───────────────┼───────────────────────────────────────────────────┤
+  │ 31  │ mode: view    │ 显示第一条 + 行切换器 "N / M"                     │
+  │     │ 多匹配        │                                                   │
+  └─────┴───────────────┴───────────────────────────────────────────────────┘
+
+  配置持久化（18, 24）
+
+  ┌─────┬────────────────┬─────────────────────────────────────────────────┐
+  │  #  │      决策      │                      结论                       │
+  ├─────┼────────────────┼─────────────────────────────────────────────────┤
+  │ 18  │ 运行时配置写回 │ 自动写回代码块（debounce 300ms）+ 脏检测跳过    │
+  ├─────┼────────────────┼─────────────────────────────────────────────────┤
+  │ 24  │ 写回并发冲突   │ 比对上次写回缓存内容，不一致 → 跳过，仅内存生效 │
+  └─────┴────────────────┴─────────────────────────────────────────────────┘
+
+  错误与依赖（15, 25）
+
+  ┌─────┬──────────┬──────────────────────────────────────────────────┐
+  │  #  │   决策   │                       结论                       │
+  ├─────┼──────────┼──────────────────────────────────────────────────┤
+  │ 15  │ 错误展示 │ 状态栏全局计数 + 视图内联错误卡片/单元格标红提示 │
+  ├─────┼──────────┼──────────────────────────────────────────────────┤
+  │ 25  │ 依赖注入 │ 构造函数注入（engine, events, config）           │
+  └─────┴──────────┴──────────────────────────────────────────────────┘
+
+  文件结构（34）
+
+  src/view/
+  ├── parser.ts
+  ├── base-view-model.ts
+  ├── table/
+  │   ├── table-view-model.ts
+  │   ├── table-view.ts
+  │   └── table-config.ts
+  ├── form/
+  │   ├── form-view-model.ts
+  │   ├── form-view.ts
+  │   └── form-config.ts
+  ├── shared/
+  │   ├── event-bus.ts
+  │   ├── data-layer.ts
+  │   ├── view-config.ts
+  │   └── types.ts
+  └── integration.ts
+
+  待讨论清单
+
+  - 撤销机制（Ctrl+Z undo 栈）
+  - 列宽拖拽调整
+  - 多文件表视图
+  - 看板/日历/画廊等后续视图
+
+  ---
+  现在写设计文档？
+
+✻ Cooked for 1m 39s
+
+> 写文档                                                                        
+
+  Thought for 4s (ctrl+o to expand)
+
+  Thought for 1s (ctrl+o to expand)
+
+● Write(docs\specs\2026-06-10-view-layer-design.md)
+  ⎿  Error: [Fact-Forcing Gate]
+
+     Before creating 
+     C:\Users\cgf\Desktop\MDDB\docs\specs\2026-06-10-view-layer-design.md, 
+     present these facts:
+
+     1. Name the file(s) and line(s) that will call this new file
+     2. Confirm no existing file serves the same purpose (use Glob)
+     3. If this file reads/writes data files, show field names, structure, and 
+     date format (use redacted or synthetic values, not raw production data)
+     4. Quote the user's current instruction verbatim
+
+     Present the facts, then retry the same operation.
+
+  Thought for 6s, searched for 1 pattern (ctrl+o to expand)
+
+● 事实确认：
+
+  1. 引用方：docs/specs/2026-06-10-implementation-roadmap.md 第 43
+  行（设计状态表 "视图层接口" 行）和第 733-748 行（Phase 17
+  描述）将在设计状态更新时引用此文件
+  2. 无冲突：Glob 确认 docs/specs/ 下不存在任何 *view* 文件
+  3. 非数据文件：纯设计规格文档，无生产数据
+  4. 用户指令：写文档
+
+● Write(docs\specs\2026-06-10-view-layer-design.md)
+  ⎿  Wrote 538 lines to docs\specs\2026-06-10-view-layer-design.md
+       2 # MD-DB 视图层设计文档 v1.0
+       3 > 日期：2026-06-10
+       4 > 状态：草案 — 视图层完整设计
+       5 > 依赖：`2026-06-10-query-engine-design.md`（查询引擎）、`2026-0
+         6-10-transaction-model-design.md`（事务模型）、`2026-06-10-stora
+       6 > 决策数：35 项 + 1 项引擎变更）
+       7 
+       8 ---
+       9 
+      10 ## 一、设计概述
+     … +596 lines (ctrl+o to expand)
+
+  Thought for 3s (ctrl+o to expand)
+
+● 现在按 brainstorming 流程进行 Spec Self-Review，然后同步更新路线图。
+
+  Thought for 9s, read 1 file (ctrl+o to expand)
+
+● Spec Self-Review 完成：
+
+  - 占位符检查：无 TBD/TODO ✓
+  - 一致性检查：§2.1 BaseViewModel CRUD ↔ §5 表格编辑交互 ↔ §4.2
+  跨视图同步流程，三者一致 ✓
+  - 范围检查：聚焦视图层 API + 表格 + 表单，其他视图进待讨论清单 ✓
+  - 歧义检查：Record 引用自 Phase 1 核心数据结构，ViewState 为 ViewModel
+  内部状态由实施阶段细化 ✓
+
+  现在同步更新路线图，将 Phase 17 从 ⬜ 改为 ✅。
+
+  Thought for 2s, read 1 file (ctrl+o to expand)
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Error: [Fact-Forcing Gate]
+
+     Before editing 
+     C:\Users\cgf\Desktop\MDDB\docs\specs\2026-06-10-implementation-roadmap.md, 
+     present these facts:
+
+     1. List ALL files that import/require this file (use Grep)
+     2. List the public functions/classes affected by this change
+     3. If this file reads/writes data files, show field names, structure, and 
+     date format (use redacted or synthetic values, not raw production data)
+     4. Quote the user's current instruction verbatim
+
+     Present the facts, then retry the same operation.
+
+  Thought for 7s, searched for 1 pattern (ctrl+o to expand)
+
+● 事实确认：
+
+  1. 引用方（非导出文件外）：docs/specs/2026-06-10-view-layer-design.md 和
+  docs/specs/2026-06-10-query-engine-design.md 在文档内引用本路线图。
+  2.
+  非代码文件：本次修改仅更新路线图文档中的设计状态标记，不影响任何公共函数/类。
+  3. 非数据文件：纯文档更新。
+  4. 用户指令：写文档
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 1 line, removed 1 line
+      40  | 解析管道 | ✅ 已设计 | `parse-pipeline-design.md` §1-8 |
+      41  | 查询引擎 | ✅ 已设计 | `query-engine-design.md` |
+      42  | 事务模型 | ✅ 已设计 | `transaction-model-design.md` |
+      43 -| 视图层接口 | ⬜ 待设计 | — |                                 
+      43 +| 视图层接口 | ✅ 已设计 | `2026-06-10-view-layer-design.md` | 
+      44  | 多文件表 | ⬜ 待设计 | — |
+      45  | A/C 形式适配层 | ⬜ 待设计 | — |
+      46  
+
+  Thought for 2s (ctrl+o to expand)
+
+● Now update Phase 17 section:
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 58 lines, removed 10 lines
+      730  
+      731  ---
+      732  
+      733 -### Phase 17: 视图层 API ⬜                                   
+      733 +### Phase 17: 视图层 API ✅                                   
+      734  
+      735  | 属性 | 内容 |
+      736  |------|------|
+      737 -| **目标** | 存储引擎对外暴露的查询/订阅接口 |                
+      738 -| **依赖** | Phase 15 |                                       
+      739 -| **状态** | **⬜ 需要先设计** |                              
+      737 +| **目标** | 实现 BaseViewModel 抽象层 + 表格视图 + 表单视图，
+          +包含声明式语法、完整 CRUD 交互、跨视图数据同步 |              
+      738 +| **依赖** | Phase 15 (查询引擎), Phase 16 (事务模型) |       
+      739 +| **状态** | ✅ 设计完成，可直接实施 |                        
+      740 +| **设计参考** | `docs/specs/2026-06-10-view-layer-design.md` 
+          +(35 项决策 + 1 项引擎变更) |                                  
+      741  
+      741 -**待决策**：                                                  
+      742 -- API 形式：QueryBuilder / ORM / 原生 SQL                     
+      743 -- 视图定义：mddb 代码块 / YAML 配置 / 编程式 API              
+      744 -- 生命周期：create → refresh → dispose                        
+      745 -- 事件系统：onDataChange / onError                            
+      746 -- 与 Obsidian MarkdownPostProcessor 的集成                    
+      742 +**产出清单**：                                                
+      743 +```                                                           
+      744 +src/view/                                                     
+      745 +├── parser.ts              # parseTableBlock / parseFormBlock 
+      746 +├── base-view-model.ts     # BaseViewModel（查询/CRUD/事件/过 
+          +滤/排序/格式化）                                              
+      747 +├── table/                                                    
+      748 +│   ├── table-view-model.ts                                   
+      749 +│   ├── table-view.ts      # TableView — DOM 渲染、虚拟滚动、 
+          +事件绑定                                                      
+      750 +│   └── table-config.ts                                       
+      751 +├── form/                                                     
+      752 +│   ├── form-view-model.ts                                    
+      753 +│   ├── form-view.ts       # FormView — DOM 渲染、字段控件映射
+      754 +│   └── form-config.ts                                        
+      755 +├── shared/                                                   
+      756 +│   ├── event-bus.ts                                          
+      757 +│   ├── data-layer.ts                                         
+      758 +│   ├── view-config.ts                                        
+      759 +│   └── types.ts                                              
+      760 +└── integration.ts         # registerViewLayer()              
+      761 +```                                                           
+      762  
+      763 +**关键实现要点**：                                            
+      764 +                                                              
+      765 +- **BaseViewModel 继承体系**：Base 负责查询/过滤/排序/CRUD/事 
+          +件/分页/格式化；Table 加列元数据/行编辑/行选择；Form 加字段校 
+          +验/脏跟踪/提交控制                                            
+      766 +- **ViewModel/View 分离**：ViewModel 不碰 DOM，View 管虚拟滚动
+          +和事件绑定                                                    
+      767 +- **声明式语法**：`mddb-table`（`from`/`show`/`sort by`/`where
+          +`/`limit`）和 `mddb-form`（`to`/`fields`/`mode`/`layout`/`keep
+          +-open`）两种代码块，通过 MarkdownPostProcessor 渲染           
+      768 +- **事件系统**：`on(type, cb)` + discriminated union，`data-ch
+          +anged` / `state-changed` / `error` 三种事件                   
+      769 +- **生命周期**：数据层全局池化（EventBus + 缓存），UI 层随代码
+          +块创建/销毁                                                   
+      770 +- **即时写穿**：行内编辑失焦即保存，表单提交走事务            
+      771 +- **多列排序**：默认替换，Shift+点击添加排序列，列头显示序号  
+      772 +- **无限滚动**：滚动自动加载 + 虚拟滚动渲染                   
+      773 +- **客户端全量校验**：表单提交前校验类型/必填/格式/PK唯一性/re
+          +f引用                                                         
+      774 +- **运行时配置写回**：UI 调整自动写回代码块（debounce 300ms + 
+          +脏检测）                                                      
+      775 +- **引擎变更**：INSERT 策略从"末尾追加"改为"指定行号插入"     
+      776 +                                                              
+      777 +**实现此阶段的决策**：                                        
+      778 +                                                              
+      779 +| 决策编号 | 来源 | 内容 |                                    
+      780 +|---------|------|------|                                     
+      781 +| 视图 §1-2 | `view-layer-design.md` | BaseViewModel + 继承， 
+          +分层原则 |                                                    
+      782 +| 视图 §3 | 同上 | 事件系统：`on(type, cb)` + discriminated un
+          +ion |                                                         
+      783 +| 视图 §4-6 | 同上 | 声明式语法：`from`/`show`/`sort by`/`wher
+          +e`/`limit` |                                                  
+      784 +| 视图 §7-9 | 同上 | 渲染方式、行内编辑、即时自动保存 |       
+      785 +| 视图 §10 | 同上 | 列选择器 + 右键隐藏 |                     
+      786 +| 视图 §11-13 | 同上 | 表单场景、`to`/`fields`/`mode`、三种模 
+          +式 |                                                          
+      787 +| 视图 §14 | 同上 | 生命周期：数据层池化 + UI 随块 |          
+      788 +| 视图 §15 | 同上 | 错误展示：状态栏 + 内联 |                 
+      789 +| 视图 §16 | 同上 | 表单控件按类型自动映射 |                  
+      790 +| 视图 §17-19 | 同上 | 提交行为、配置写回、客户端全量校验 |   
+      791 +| 视图 §20-22 | 同上 | 新增/删除入口、多列排序 |              
+      792 +| 视图 §24-28 | 同上 | 写回并发、依赖注入、插入行为、分页、表 
+          +单布局 |                                                      
+      793 +| 视图 §29 | 同上 | **引擎变更**：INSERT 改为指定行号插入 |   
+      794 +| 视图 §30-35 | 同上 | 排序语义、view 多匹配、解析器、View分离
+          +、文件结构、集成入口 |                                        
+      795 +                                                              
+      796  ---
+      797  
+      798  ### Phase 18: 多文件表 ⬜
+
+  Thought for 5s (ctrl+o to expand)
+
+● Now update the dependency graph and counts:
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Error editing file
+
+  Thought for 9s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 1 line, removed 1 line
+      885      │                                        │       │        
+                                    │
+      886      │                                        │       ├── Phase
+            16: Transaction ✅ ─────┘
+      887      │                                        │       │
+      888 -    │                                        │       ├── Phase
+          - 17: View API ⬜                                              
+      888 +    │                                        │       ├── Phase
+          + 17: View API ✅                                              
+      889      │                                        │       │
+      890      │                                        │       ├── Phase
+            18: Multi-file ⬜
+      891      │                                        │
+
+  Thought for 1s (ctrl+o to expand)
+
+● Now update the counts at the bottom:
+
+  Thought for 3s, searched for 1 pattern (ctrl+o to expand)
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 2 lines, removed 2 lines
+      893      │
+      894      └── Phase 20: Settings + UX
+      895  
+      896 -    Ready to implement: Phases 0-16, 20  (✅ 18 phases)       
+      897 -    Needs design first: Phases 17-19     (⬜ 3 phases)        
+      896 +    Ready to implement: Phases 0-17, 20  (✅ 19 phases)       
+      897 +    Needs design first: Phases 18-19     (⬜ 2 phases)        
+      898  ```
+      899  
+      900  ---
+  Thought for 1s (ctrl+o to expand)
+
+● Update the document index section:
+
+  Thought for 4s, read 1 file (ctrl+o to expand)
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 1 line
+      1000  | 解析管道设计 | `docs/specs/2026-06-10-parse-pipeline-design
+            .md` | 6 阶段解析流程 |
+      1001  | 查询引擎设计 | `docs/specs/2026-06-10-query-engine-design.m
+            d` | 结构化查询、过滤、聚合、ref 跟随 |
+      1002  | 事务模型设计 | `docs/specs/2026-06-10-transaction-model-des
+            ign.md` | 混合事务、WAL 驱动、乐观锁、回滚语义 |
+      1003 +| 视图层设计 | `docs/specs/2026-06-10-view-layer-design.md` |
+           + BaseViewModel、表格/表单视图、声明式语法、35 项决策 |       
+      1004  | 查询引擎实施计划 | `docs/superpowers/plans/2026-06-10-query
+            -engine-implementation.md` | 7 任务、40 测试 |
+      1005  | 架构构思 | `构思v1.0.md` | 原始设计讨论、视图层、路线图 |
+      1006  | **本文档** | `docs/specs/2026-06-10-implementation-roadmap.
+            md` | 实施路线图 |
+
+  Thought for 3s (ctrl+o to expand)
+
+  Thought for 1s (ctrl+o to expand)
+
+● ---
+  视图层设计文档已完成并写入：
+
+  新建：docs/specs/2026-06-10-view-layer-design.md
+  - 35 项决策 + 1 项引擎变更
+  - 架构：BaseViewModel 继承体系 + View/ViewModel 分离 + 数据层池化
+  - 表格视图：声明式语法、行内编辑、多列排序、无限滚动、CRUD 操作菜单
+  - 表单视图：三种模式、字段控件自动映射、全量客户端校验、可配提交行为
+
+  更新：docs/specs/2026-06-10-implementation-roadmap.md
+  - Phase 17：⬜ 待设计 → ✅ 已设计
+  - 设计状态表、依赖图计数、文档索引同步更新
+
+  请审阅设计文档，如需修改或完善任何部分请告知。确认后进入实施计划阶段。
+
+✻ Churned for 15m 45s
+
+> /rename 
+  ⎿  Could not generate a name: no conversation context yet. Usage: /rename <name>
+
+> /rename view layer 
+  ⎿  Session renamed to: view layer

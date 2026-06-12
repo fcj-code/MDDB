@@ -29,7 +29,7 @@ export default class MDDBPlugin extends Plugin {
 
     // ── 创建引擎 ──
     const fileOperator = this.createFileOperator();
-    this.engine = new MDDBEngine(fileOperator);
+    this.engine = new MDDBEngine(fileOperator, this.settings);
     globalEngine = this.engine;
 
     // ── 初始化引擎 ──
@@ -93,6 +93,16 @@ export default class MDDBPlugin extends Plugin {
       id: 'show-diagnostics',
       name: 'Show diagnostics',
       callback: () => this.showDiagnostics(),
+    });
+    this.addCommand({
+      id: 'clear-logs',
+      name: 'Clear logs',
+      callback: () => this.clearLogs(),
+    });
+    this.addCommand({
+      id: 'rebuild-cache',
+      name: 'Rebuild cache',
+      callback: () => this.rebuildCache(),
     });
 
     // ── 设置面板 ──
@@ -465,6 +475,26 @@ export default class MDDBPlugin extends Plugin {
   private async showDiagnostics() {
     const result = await this.engine.executeDiagnosticCommand('show-diagnostics');
     new Notice(result.message, 10000);
+  }
+
+  private async clearLogs() {
+    if (!this.engine.ready) {
+      new Notice('MD-DB: Engine not ready');
+      return;
+    }
+    await this.engine.executeDiagnosticCommand('clear-logs');
+    new Notice('MD-DB: Logs cleared');
+  }
+
+  private async rebuildCache() {
+    if (!this.engine.ready) {
+      new Notice('MD-DB: Engine not ready');
+      return;
+    }
+    new Notice('MD-DB: Rebuilding cache...');
+    await this.engine.rebuildCache();
+    // 触发全量扫描以重新填充 cache
+    await this.rescanVault();
   }
 
   // ── FileOperator 实现 ──────────────────

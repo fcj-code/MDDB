@@ -116,6 +116,12 @@ export class SchemaRegistryStore {
     return Object.keys(this.registry.tables);
   }
 
+  /** 清除所有注册表数据 */
+  clearAll(): void {
+    this.registry = { version: 2, tables: {} };
+    this.dirty = true;
+  }
+
   /** 获取表 Schema */
   getSchema(table: string): SchemaSummary | undefined {
     const entry = this.registry.tables[table];

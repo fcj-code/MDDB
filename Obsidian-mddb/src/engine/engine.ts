@@ -32,6 +32,7 @@ import type { RawQueryOptions } from '../query/engine';
 import type { FileParseResult, VaultScanResult } from '../parse/pipeline';
 import type { EngineDiagnostics } from './diagnostics';
 import type { FileOperator } from '../write/types';
+import type { MDDBSettings } from '../settings';
 import type { TableSource } from '../core/types';
 import type { DeadLetterInfo } from '../wal/dead-letter';
 import type { WalEntry, WalOperation, ReplayResult } from '../wal/types';
@@ -95,8 +96,22 @@ export class MDDBEngine {
 
   // 配置（'quoted' 支持中文等 Unicode 标识符）
   private identMode: 'ascii' | 'quoted' = 'quoted';
+  private settings: MDDBSettings;
 
-  constructor(fileOperator?: FileOperator) {
+  constructor(fileOperator?: FileOperator, settings?: Partial<MDDBSettings>) {
+    // 合并设置（测试环境可能不传入）
+    this.settings = {
+      logLevel: 'warn',
+      autoScanOnStart: true,
+      backgroundRescanIntervalMin: 60,
+      dataPath: '',
+      cachePath: '.mddb/cache',
+      walPath: '.mddb/wals',
+      rawSqlAdvancedMode: false,
+      maxQueryRows: 5000,
+      ...(settings ?? {}),
+    };
+
     // Milestone 1/2 子组件
     this.sqlite = new SQLiteAdapter();
     this.binding = new BindingStore(this.sqlite);
@@ -110,6 +125,7 @@ export class MDDBEngine {
       this.sqlite,
       this.schemaRegistry,
       this.identMode,
+      this.settings.maxQueryRows,
     );
     this.diagnostics = new DiagnosticsManager();
 
@@ -746,9 +762,46 @@ export class MDDBEngine {
           ].join('\n'),
         };
 
+      case 'rebuild-cache':
+        await this.rebuildCache();
+        return { success: true, message: 'Cache rebuild triggered' };
+
+      case 'export-diagnostics':
+        const fullDiag = await this.getDiagnostics();
+        return {
+          success: true,
+          message: JSON.stringify(fullDiag, null, 2),
+        };
+
+      case 'clear-logs':
+        this.diagnostics.clearLogs();
+        return { success: true, message: 'Diagnostic logs cleared' };
+
       default:
         return { success: false, message: `Unknown command: ${command}` };
     }
+  }
+
+  /** 获取当前引擎设置 */
+  getSettings(): MDDBSettings {
+    return { ...this.settings };
+  }
+
+  /** 全量重建 cache（清除所有数据后重新扫描） */
+  async rebuildCache(): Promise<void> {
+    if (!this._ready) {
+      throw new EngineError('Engine not initialized', 'ENGINE_NOT_READY');
+    }
+    // 清空 binding 表
+    this.binding.clearAll();
+    // 清空 schema registry
+    this.schemaRegistry.clearAll();
+    // 清空 file hashes
+    this.fileHash.clearAll();
+    // 重置诊断
+    this.diagnostics.clearLogs();
+    // 触发重建事件，由上层应用触发 rescan
+    this.emit('cache-rebuild-requested', {});
   }
 
   // ============================================================

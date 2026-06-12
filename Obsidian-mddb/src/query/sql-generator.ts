@@ -23,10 +23,15 @@ export interface GeneratedSQL {
 export class SQLGenerator {
   /** 默认查询 LIMIT */
   static readonly DEFAULT_LIMIT = 200;
-  /** 最大查询 LIMIT */
-  static readonly MAX_LIMIT = 5000;
+  /** 最大查询 LIMIT（可通过构造函数覆盖） */
+  readonly maxLimit: number;
 
-  constructor(private identMode: IdentifierMode = 'ascii') {}
+  constructor(private identMode: IdentifierMode = 'ascii', maxLimit?: number) {
+    this.maxLimit = maxLimit ?? SQLGenerator.MAX_LIMIT;
+  }
+
+  /** 兼容旧引用的静态常量 */
+  static readonly MAX_LIMIT = 5000;
 
   /** 将 Query 翻译为 SELECT SQL */
   generateQuery(query: Query, validFields?: string[]): GeneratedSQL {
@@ -106,7 +111,7 @@ export class SQLGenerator {
     // LIMIT / OFFSET
     let limitClause = '';
     const limit = query.limit ?? SQLGenerator.DEFAULT_LIMIT;
-    const safeLimit = Math.min(limit, SQLGenerator.MAX_LIMIT);
+    const safeLimit = Math.min(limit, this.maxLimit);
     limitClause = `LIMIT ?`;
     params.push(safeLimit);
     if (query.offset !== undefined) {

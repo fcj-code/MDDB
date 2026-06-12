@@ -1520,11 +1520,11 @@ blockId 作为天然定位信息
 日志级别            ✅ 已有（MDDBSettingTab）
 自动扫描开关        ✅ 已有
 后台重扫间隔        ✅ 已有
-数据路径             ⬜
-缓存路径             ⬜
-WAL 路径             ⬜
-raw SQL 高级模式     ⬜
-最大查询行数         ⬜
+数据路径             ✅ 2026-06-12
+缓存路径             ✅ 2026-06-12
+WAL 路径             ✅ 2026-06-12
+raw SQL 高级模式     ✅ 2026-06-12
+最大查询行数         ✅ 2026-06-12
 ```
 
 命令面板：
@@ -1535,8 +1535,8 @@ MD-DB: Show stats           ✅ 已有
 MD-DB: Clear cache          ✅ 已有
 MD-DB: Retry dead WAL       ✅ 已有
 MD-DB: Show diagnostics     ✅ 已有
-MD-DB: Clear logs           ⬜
-MD-DB: Rebuild cache        ⬜
+MD-DB: Clear logs           ✅ 2026-06-12
+MD-DB: Rebuild cache        ✅ 2026-06-12
 ```
 
 ### 完成标准

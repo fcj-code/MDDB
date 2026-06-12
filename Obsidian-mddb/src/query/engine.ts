@@ -42,8 +42,9 @@ export class QueryEngine {
     private sqlite: SQLiteAdapter,
     private schemaRegistry: SchemaRegistryStore,
     private identMode: IdentifierMode = 'ascii',
+    maxQueryRows?: number,
   ) {
-    this.sqlGenerator = new SQLGenerator(identMode);
+    this.sqlGenerator = new SQLGenerator(identMode, maxQueryRows);
     this.assembler = new ResultAssembler();
   }
 

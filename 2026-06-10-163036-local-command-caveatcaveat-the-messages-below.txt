@@ -1,0 +1,1268 @@
+╭─── Claude Code v2.1.170 ─────────────────────────────────────────────────────╮
+│                                         │ Tips for getting started           │
+│              Welcome back!              │ Run /init to create a CLAUDE.md f… │
+│                                         │ ────────────────────────────────── │
+│                 ▐▛███▜▌                 │ What's new                         │
+│                ▝▜█████▛▘                │ Added `--safe-mode` flag (and `CL… │
+│                  ▘▘ ▝▝                  │ Added `/cd` command to move a ses… │
+│                                         │ Added a `disableBundledSkills` se… │
+│   deepseek-v4-pro · API Usage Billing   │ /release-notes for more            │
+│             ~\Desktop\MDDB              │                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+> /clear                                                                        
+
+> @docs\specs\2026-06-10-storage-engine-design.md                               
+  读取目前的开发进度，开始渐进式讨论下一轮的设计                                
+  ⎿  Read docs\specs\2026-06-10-storage-engine-design.md (475 lines)
+
+  Thought for 11s (ctrl+o to expand)
+
+● 让我先读取相关的设计文档和实现路线图，全面了解当前进度。
+
+  Thought for 15s, searched for 1 pattern, read 2 files (ctrl+o to expand)
+
+● 当前进度总览
+
+  已通读三份设计文档，以下是当前状态：
+
+  ✅ 已完成的底层设计（33 项决策已定）
+
+  ┌──────────┬──────────────────┬──────────────────────────────────────────┐
+  │   模块   │       文档       │                 核心内容                 │
+  ├──────────┼──────────────────┼──────────────────────────────────────────┤
+  │ 存储引擎 │ storage-engine-d │ 三层 PK、绑定表、CRUD、写穿路径、三层重  │
+  │ 架构     │ esign.md         │ 扫、WAL、冷启动、数据格式                │
+  ├──────────┼──────────────────┼──────────────────────────────────────────┤
+  │          │ parse-pipeline-d │ Schema 提取（4                           │
+  │ 解析管道 │ esign.md         │ 来源）、词法分析（转义切分）、12         │
+  │          │                  │ 种类型转换、验证链、索引写入             │
+  └──────────┴──────────────────┴──────────────────────────────────────────┘
+
+  ⬜ 待设计的 5 个模块
+
+  根据依赖图，下一轮的自然起点是查询引擎：
+
+  查询引擎 (Phase 15)  ← 被 Phase 17(视图API) 和 Phase 18(多文件表) 依赖
+  事务模型 (Phase 16)  ← 仅依赖 WAL，可与查询引擎并行设计
+  视图层接口 (Phase 17) ← 依赖查询引擎
+  多文件表 (Phase 18)   ← 依赖查询引擎
+  A/C 形式适配 (Phase 19) ← 依赖解析管道
+
+  ---
+  建议讨论顺序：先攻查询引擎
+
+  理由：
+  - 它是连接存储引擎和视图层的枢纽——没有查询能力，上面的 CRUD
+  只是一个"只能存不能取"的引擎
+  - 视图层 API 和多文件表都依赖它，先确定查询语义才能决定上层接口
+  - 查询语法的选择（SQL 子集 vs DQL vs 两者都支持）会影响后续大量设计决策
+
+  查询引擎的核心待定问题（从路线图摘出）：
+
+  1. 语法选择：实现一个完整 SQL 子集？还是像 Dataview 那样自定义
+  DQL？还是两者都支持？
+  2. 解析器方案：手写递归下降 vs ANTLR/Peg.js？
+  3. 优化器：基于成本 vs 基于规则？
+  4. 执行引擎：表扫描 / 索引扫描 / JOIN 策略 / 聚合下推
+  5. 结果格式：JSON / Markdown 表格 / CSV？
+
+  ---
+  你觉得从查询引擎开始可以吗？还是你更想先讨论事务模型（跨文件原子性、隔离级别）
+  或视图层 API？
+
+✻ Crunched for 41s
+
+> /superpowers:brainstorming                                                    
+开始讨论设计查询引擎，通过渐进式讨论，分析，质疑，确定最终方案。                
+
+  Thought for 6s (ctrl+o to expand)
+
+● 好的，让我们来设计查询引擎。先按流程来。
+
+  Thought for 2s (ctrl+o to expand)
+
+  Thought for 2s (ctrl+o to expand)
+
+● 我们已经通读了三份设计文档，对项目背景有了充分了解。接下来 —
+
+  Some of what we're working on might be easier to explain if I can show it to
+  you in a web browser. I can put together mockups, diagrams, comparisons, and
+  other visuals as we go. This feature is still new and can be token-intensive.
+  Want to try it? (Requires opening a local URL)
+
+✻ Cooked for 17s
+
+> try it                                                                        
+
+  Thought for 7s, read 1 file, listed 1 directory (ctrl+o to expand)
+
+● 1. 当前用户请求：通过渐进式讨论设计 MD-DB 的查询引擎
+  2. 此命令目的：列出 brainstorming skill 的 scripts 目录，找到启动 visual
+  companion server 的脚本
+
+  Thought for 3s, listed 2 directories (ctrl+o to expand)
+● Bash(bash "C:/Users/cgf/.claude/plugins/cache/claude-plugins-official/superpow
+      ers/5.1.0/skills/brainstorming/scripts/start-server.sh" --project-dir
+      "C:/Users/cgf/Des…)
+  ⎿  Running in the background (↓ to manage)
+
+  Thought for 1s (ctrl+o to expand)
+
+● Bash(sleep 2 && cat
+      "C:/Users/cgf/Desktop/MDDB/.superpowers/brainstorm/"*/state/server-info
+      2>/dev/null || echo "Not ready yet")
+  ⎿  {
+       "type": "server-started",
+       "port": 62514,
+     … +8 lines (ctrl+o to expand)
+
+  Thought for 9s (ctrl+o to expand)
+
+● 服务器已启动。现在让我们从第一个核心问题开始。
+
+  ---
+  问题 1：查询引擎的主要用户是谁？
+
+  这决定了语法设计、API 形态和优化方向。有三种可能：
+
+  ┌─────┬─────────────────────┬────────────────────────────────┬───────────┐
+  │ 选  │        用户         │            查询方式            │   类比    │
+  │ 项  │                     │                                │           │
+  ├─────┼─────────────────────┼────────────────────────────────┼───────────┤
+  │ A   │ 终端用户（笔记作者  │ 在 Markdown 中嵌入查询代码块， │ Obsidian  │
+  │     │ ）                  │ 结果渲染为表格/列表            │ Dataview  │
+  ├─────┼─────────────────────┼────────────────────────────────┼───────────┤
+  │     │ 视图层（表格/看板组 │ TypeScript API                 │ 传统 ORM  │
+  │ B   │ 件）                │ 调用，编程式构建查询           │ / QueryBu │
+  │     │                     │                                │ ilder     │
+  ├─────┼─────────────────────┼────────────────────────────────┼───────────┤
+  │ C   │ 两者都要            │ 底层提供统一 API，上层分别暴露 │ Notion    │
+  │     │                     │  DQL 语法 + 编程接口           │ 数据库    │
+  └─────┴─────────────────────┴────────────────────────────────┴───────────┘
+
+  你倾向哪个方向？
+
+✻ Worked for 48s
+
+> 目前设计是B，后期看情况执行A                                                  
+
+  Thought for 11s (ctrl+o to expand)
+
+● 好的，明确了——B 为主，A 是远期。这简化了很多设计：我们不需要现在设计用户面查询
+  语言，核心是给视图层提供一个干净的编程接口。
+
+  ---
+  问题 2：API 的抽象层次
+
+  既然数据已在内存 SQLite 中，查询引擎的 API 应该多"厚"？
+
+  选项: A: 薄透传
+  风格: 视图层直接写 SQL 字符串，引擎只负责执行 + 结果标准化
+  示例: engine.query("SELECT * FROM txn WHERE amount > 100")
+  优劣: 最灵活，但视图层需懂 SQL 和表结构
+  ────────────────────────────────────────
+  选项: B: QueryBuilder
+  风格: 类型安全的链式 API，引擎构建 SQL
+  示例: engine.from('txn').where('amount', '>', 100).orderBy('date').limit(20)
+  优劣: 类型安全、可组合，但需要实现 DSL
+  ────────────────────────────────────────
+  选项: C: 结构化查询对象
+  风格: JSON 定义的查询，引擎翻译为 SQL
+  示例: engine.query({ table: 'txn', filter: {...}, sort: 'date', limit: 20 })
+  优劣: 易于序列化/缓存，但表达能力受限
+
+  你倾向哪种？
+
+✻ Crunched for 18s
+
+> 评价建议一下                                                                  
+
+  Thought for 16s (ctrl+o to expand)
+
+● 我的分析：
+
+  A: 薄透传 SQL
+
+  ┌─────────────────────────────┬────────────────────────────┐
+  │             👍              │             👎             │
+  ├─────────────────────────────┼────────────────────────────┤
+  │ 实现最简单，sql.js 直接执行 │ 视图层需要懂表结构和 SQL   │
+  ├─────────────────────────────┼────────────────────────────┤
+  │ 完整 SQL 表达能力           │ SQL 注入风险               │
+  ├─────────────────────────────┼────────────────────────────┤
+  │ 零抽象开销                  │ 列名拼写错误编译期无法发现 │
+  └─────────────────────────────┴────────────────────────────┘
+
+  B: QueryBuilder
+
+  ┌───────────────────────────────┬──────────────────────────────────────────┐
+  │              👍               │                    👎                    │
+  ├───────────────────────────────┼──────────────────────────────────────────┤
+  │ TypeScript 类型安全，IDE      │ 实现成本最高——需要完整 DSL               │
+  │ 自动补全                      │                                          │
+  ├───────────────────────────────┼──────────────────────────────────────────┤
+  │ 可组合，逐步构建查询          │ 复杂查询（子查询、窗口函数）可能表达不了 │
+  ├───────────────────────────────┼──────────────────────────────────────────┤
+  │ 防注入                        │ 视图层开发者多学一套 API                 │
+  └───────────────────────────────┴──────────────────────────────────────────┘
+
+  C: 结构化查询对象 (JSON)
+
+  ┌──────────────────────────────────┬───────────────────────────┐
+  │                👍                │            👎             │
+  ├──────────────────────────────────┼───────────────────────────┤
+  │ 可序列化——查询可缓存、可持久化   │ 嵌套条件写起来比 SQL 啰嗦 │
+  ├──────────────────────────────────┼───────────────────────────┤
+  │ 易于校验，JSON Schema 直接卡格式 │ 表达能力介于 A 和 B 之间  │
+  ├──────────────────────────────────┼───────────────────────────┤
+  │ 实现成本介于 A 和 B 之间         │ 同样无编译期类型安全      │
+  ├──────────────────────────────────┼───────────────────────────┤
+  │ 语言无关，未来可跨上下文使用     │                           │
+  └──────────────────────────────────┴───────────────────────────┘
+
+  ---
+  我的建议：C 为主，A 为底
+
+  视图层
+    │
+    ├── 90% 日常查询 → 结构化查询对象 (C)
+    │    过滤、排序、分页、简单聚合、PK 查找
+    │
+    └── 10% 复杂查询 → 原生 SQL escape hatch (A)
+         跨表 JOIN、子查询、窗口函数
+
+  理由：
+
+  1. C 覆盖绝大多数视图层需求——表格组件要的就是「某表 + 过滤条件 + 排序 +
+  翻页」，这正是 JSON 最自然的表达
+  2. 可序列化是隐藏红利——后续做查询缓存、视图定义持久化、查询历史，JSON
+  天然可存可传
+  3. A 作为 escape hatch 保底——不会被自己造的 DSL 卡住
+  4. 不做 B 的理由——QueryBuilder 的真正价值是给外部用户提供类型安全，但视图层开
+  发者就是引擎开发者自己，边际收益小
+
+  你同意 C+A 这个方向吗？
+
+✻ Brewed for 27s
+
+> 同意                                                                          
+  Thought for 5s (ctrl+o to expand)
+
+● 好，方向定了。下一个问题：
+
+  ---
+  问题 3：结构化查询对象的表达能力边界
+
+  C 方案需要明确——什么在查询对象范围内，什么推到 SQL escape
+  hatch？我列几个场景，你判断是否该纳入 C：
+
+  ┌─────┬────────────────────────────────────────────┬────────┐
+  │  #  │                    场景                    │ 复杂度 │
+  ├─────┼────────────────────────────────────────────┼────────┤
+  │ 1   │ 单表 + 等值过滤 + 排序 + 分页              │   低   │
+  ├─────┼────────────────────────────────────────────┼────────┤
+  │ 2   │ 多条件组合（AND/OR 嵌套）                  │ 低–中  │
+  ├─────┼────────────────────────────────────────────┼────────┤
+  │ 3   │ 聚合：COUNT / SUM / AVG，按某列 GROUP BY   │   中   │
+  ├─────┼────────────────────────────────────────────┼────────┤
+  │ 4   │ 跨表关联（ref 类型字段跟随）               │   中   │
+  ├─────┼────────────────────────────────────────────┼────────┤
+  │ 5   │ 两表 JOIN（如 transactions JOIN accounts） │   高   │
+  ├─────┼────────────────────────────────────────────┼────────┤
+  │ 6   │ 子查询 / 窗口函数                          │   高   │
+  └─────┴────────────────────────────────────────────┴────────┘
+
+  我的建议是 1-4 纳入 C，5-6 走 SQL escape hatch。理由是：
+
+  - 场景 4（ref 跟随） 在 MD-DB 中是刚需——ref(accounts)
+  类型字段查询时自然需要"展开"关联表的值，这不是传统
+  JOIN，而更像是字段解析，应该是一等公民
+  - 场景 5/6 真正的跨表 JOIN 和窗口函数场景极少，SQL string 兜底足够
+
+  你觉得这个边界可以吗？
+
+✻ Brewed for 12s
+
+> 这个可以                                                                      
+
+  Thought for 11s (ctrl+o to expand)
+
+● 明确了边界，接下来——
+
+  问题 4：查询结果格式
+
+  引擎返回给视图层的数据应该是什么形态？
+
+  ┌────────────┬──────────────────────┬──────────────────────────────────────┐
+  │    选项    │         格式         │                 示例                 │
+  ├────────────┼──────────────────────┼──────────────────────────────────────┤
+  │ A:         │ Array<Record<string, │ [{日期: "2024-06-01", 金额: -4500},  │
+  │ 裸行数组   │  any>>               │ ...]                                 │
+  ├────────────┼──────────────────────┼──────────────────────────────────────┤
+  │ B:         │ { rows, columns,     │                                      │
+  │ 带元信息的 │ total, page }        │ 附加列类型、总数、分页信息           │
+  │  ResultSet │                      │                                      │
+  ├────────────┼──────────────────────┼──────────────────────────────────────┤
+  │ C: 强类型  │                      │                                      │
+  │ Record     │ Array<TypedRecord>   │ 每个字段带类型标记，视图层可直接渲染 │
+  │ 对象       │                      │                                      │
+  └────────────┴──────────────────────┴──────────────────────────────────────┘
+
+  我的推荐是 B，理由是视图层做分页需要 total，做表格渲染需要 columns 元信息。A
+  太薄，C 过度设计（Schema 已有类型信息，无需在每个 cell 里重复）。
+
+  你觉得呢？
+
+✻ Churned for 17s
+
+> 同意                                                                          
+
+  Thought for 10s (ctrl+o to expand)
+
+● 好。下一个问题涉及执行模型：
+
+  ---
+  问题 5：查询执行模型——同步还是异步？
+
+  数据在内存 SQLite（sql.js/WASM），查询不涉及 IO。但有两个变量：
+
+  ┌──────────────────────────┬──────────────────────────────────┐
+  │         考虑因素         │             实际情况             │
+  ├──────────────────────────┼──────────────────────────────────┤
+  │ 数据都在内存             │ 无磁盘 IO，同步即可              │
+  ├──────────────────────────┼──────────────────────────────────┤
+  │ SQLite WASM 本身是同步的 │ sql.js 的 db.exec() 就是同步调用 │
+  ├──────────────────────────┼──────────────────────────────────┤
+  │ 大数据量聚合/排序        │ 可能占用主线程几 ms ~ 几百 ms    │
+  ├──────────────────────────┼──────────────────────────────────┤
+  │ Obsidian 插件环境        │ 主线程阻塞会卡 UI                │
+  ├──────────────────────────┼──────────────────────────────────┤
+  │ 现有设计中的重扫         │ 已在后台空闲执行                 │
+  └──────────────────────────┴──────────────────────────────────┘
+
+  两种方案：
+
+  选项: A: 同步
+  做法: query(q): ResultSet，直接返回
+  权衡: 简单，小数据量够用；大数据量卡 UI
+  ────────────────────────────────────────
+  选项: B: 异步（默认同步，长查询可切异步）
+  做法: query(q): ResultSet + queryAsync(q): Promise<ResultSet>
+  权衡: 主线程不卡，但增加复杂度
+
+  我的建议是 A（同步），理由：
+
+  - MD-DB 是个人知识库数据库，单表千行级已是上限
+  - sql.js 对几千行的查询在主线程内 < 5ms
+  - 如果未来真的出现万行级慢查询，再加 queryAsync 不破坏现有 API
+  - B 增加的 Promise 复杂度不值得为预期不会出现的场景买单
+
+  你觉得呢？
+
+✻ Worked for 19s
+
+> 同意                                                                          
+
+  Thought for 1m 24s (ctrl+o to expand)
+
+● 基础方向都对齐了。现在进入具体设计——
+
+  我先展示查询对象的核心结构，看看这个 JSON schema 是否符合你的预期。
+
+  Thought for 5s (ctrl+o to expand)
+
+● 第一节：查询对象 (Query) 核心结构
+
+  interface Query {
+    table: string;                    // 表名，必填
+    select?: SelectClause;            // 选择哪些列，默认全部
+    filter?: FilterGroup;             // WHERE 条件，默认无
+    sort?: SortClause[];              // ORDER BY，默认按 @sort 或写入时序
+    limit?: number;                   // 返回行数上限
+    offset?: number;                  // 偏移量
+    groupBy?: string[];               // GROUP BY 列名列表
+    having?: FilterGroup;             // HAVING 条件（配合 groupBy）
+    aggregates?: AggregateClause[];   // 聚合函数
+    followRefs?: FollowRefClause[];   // ref 字段跟随展开
+    raw?: string;                     // SQL escape hatch（与上述结构互斥）
+  }
+
+  几个关键点：
+
+  - raw 存在时忽略所有结构化字段，直接透传 SQL 给 sql.js
+  - filter 用嵌套 FilterGroup 表达 AND/OR 树，这是整个结构最复杂的部分
+  - followRefs 是场景 4 的核心——查询 transactions 时自动把 账户 字段对应的
+  accounts 表记录展开
+
+  先确认框架对吗？然后我展开最核心的三个子结构：FilterGroup（过滤）、AggregateCl
+  ause（聚合）、FollowRefClause（关联展开）。
+
+✻ Baked for 1m 39s
+
+> 确认框架                                                                      
+  Thought for 3s (ctrl+o to expand)
+
+● 好。展开第一个子结构：
+
+  第二节：FilterGroup（过滤条件树）
+
+  // 单个条件
+  interface FilterCondition {
+    field: string;                              // 列名
+    op: '=' | '!=' | '>' | '<' | '>=' | '<='   // 比较
+      | 'in' | 'not_in'                          // 集合
+      | 'like' | 'not_like'                      // 模糊匹配
+      | 'is_null' | 'is_not_null';               // 空值判断
+    value?: any | any[];                         // is_null / is_not_null 不需要
+  value
+  }
+
+  // 条件组——递归结构，表达 AND/OR 嵌套
+  interface FilterGroup {
+    logic: 'and' | 'or';               // 组内条件的逻辑关系
+    conditions: (FilterCondition | FilterGroup)[];  // 可嵌套
+  }
+
+  示例——简单过滤：
+
+  // WHERE 分类 = '餐饮' AND 金额 < -50
+  {
+    logic: 'and',
+    conditions: [
+      { field: '分类', op: '=', value: '餐饮' },
+      { field: '金额', op: '<', value: -5000 }  // decimal 存整数
+    ]
+  }
+
+  示例——嵌套：
+
+  // WHERE (分类 = '餐饮' OR 分类 = '交通') AND 金额 < -50
+  {
+    logic: 'and',
+    conditions: [
+      {
+        logic: 'or',
+        conditions: [
+          { field: '分类', op: '=', value: '餐饮' },
+          { field: '分类', op: '=', value: '交通' }
+        ]
+      },
+      { field: '金额', op: '<', value: -5000 }
+    ]
+  }
+
+  转 SQL 时：递归遍历树，logic: 'and' → AND，logic: 'or' → OR，每个 FilterGroup
+  加括号。
+
+  这个可以吗？
+
+✻ Cogitated for 11s
+
+> 可以                                                                          
+
+  Thought for 2s (ctrl+o to expand)
+
+● 第三节：聚合
+
+  interface AggregateClause {
+    field: string;                    // 聚合的列名，'*' 表示 COUNT(*)
+    fn: 'count' | 'sum' | 'avg' | 'min' | 'max';
+    alias?: string;                   // 结果列名，默认自动生成如 'sum_amount'
+  }
+
+  示例——按分类统计支出：
+
+  // SELECT 分类, SUM(金额) as total, COUNT(*) as cnt
+  // FROM transactions
+  // WHERE 金额 < 0
+  // GROUP BY 分类
+  // HAVING total < -10000
+
+  const q: Query = {
+    table: 'transactions',
+    filter: { logic: 'and', conditions: [
+      { field: '金额', op: '<', value: 0 }
+    ]},
+    groupBy: ['分类'],
+    aggregates: [
+      { field: '金额', fn: 'sum', alias: 'total' },
+      { field: '*', fn: 'count', alias: 'cnt' }
+    ],
+    having: {
+      logic: 'and',
+      conditions: [
+        { field: 'total', op: '<', value: -10000 }  // 引用 alias
+      ]
+    }
+  };
+
+  关键决定：
+  - groupBy 只声明列名，不需要表达式（够用）
+  - having 复用 FilterGroup，但条件中的 field 可以是聚合的 alias（如
+  total），也可以是原始列
+  - 聚合查询和无聚合查询返回的 ResultSet 结构相同，通过 columns 区分
+
+  这个可以吗？
+
+✻ Cooked for 9s
+
+> 可以                                                                          
+
+  Thought for 5s (ctrl+o to expand)
+
+● 第四节：Ref 跟随展开
+
+  这是 MD-DB 查询中最有特色的部分。回顾场景：transactions 表有 账户 字段类型为
+  ref(accounts)，存储的是 accounts 表的 logical_pk
+  值。查询时想看到账户名而不仅是 PK 值。
+
+  interface FollowRefClause {
+    field: string;              // 当前表中的 ref 字段名，如 '账户'
+    include?: string[];         // 目标表的列名，默认全部，如 ['账户名', '类型']
+    prefix?: string;            // 结果列前缀，默认目标表名，如 'accounts'
+  }
+
+  示例：
+
+  // 查询交易记录，展开关联账户信息
+  const q: Query = {
+    table: 'transactions',
+    filter: { logic: 'and', conditions: [
+      { field: '日期', op: '>=', value: '2024-06-01' }
+    ]},
+    sort: [{ field: '日期', dir: 'asc' }],
+    followRefs: [
+      { field: '账户', include: ['账户名', '类型'], prefix: 'acc' }
+    ],
+    limit: 20
+  };
+
+  引擎内部执行（2 步）：
+
+  Step 1: SELECT * FROM transactions WHERE 日期 >= '2024-06-01' LIMIT 20
+          → 得到结果集，其中 acc 列值为 logical_pk
+
+  Step 2: 收集所有 ref 值 → SELECT storage_pk, logical_pk, 账户名, 类型
+          FROM accounts WHERE logical_pk IN (vk1, vk2, ...)
+          → 按 prefix 展开: results[i].acc_账户名, results[i].acc_类型
+
+  ResultSet 中的体现：
+
+  // 返回的 columns 增加展开列
+  columns: [
+    { name: '日期', type: 'date' },
+    { name: '金额', type: 'decimal' },
+    { name: '账户', type: 'ref' },          // 原始 ref 值保留
+    { name: 'acc_账户名', type: 'string' },   // 展开列
+    { name: 'acc_类型', type: 'string' },     // 展开列
+    ...
+  ]
+
+  关键决定：
+  - 原始 ref 值保留，展开列追加——不会覆写
+  - 采用两步查询而非 SQL JOIN：数据可能跨文件，绑定表解析更可靠
+  - 引用断裂：目标不存在 → 展开列值为 NULL，不报错
+
+  这个可以吗？
+
+✻ Baked for 16s
+
+> 可以                                                                          
+
+  Thought for 4s (ctrl+o to expand)
+
+● 第五节：ResultSet 结构
+
+  interface ResultSet {
+    rows: Record<string, any>[];     // 数据行
+    columns: ColumnMeta[];           // 列元信息
+    total: number;                   // 总行数（不受 limit/offset 影响）
+    page: PageInfo | null;           // 分页信息
+  }
+
+  interface ColumnMeta {
+    name: string;                    // 列名
+    type: FieldType['kind'];         // 类型：'string' | 'integer' | 'decimal' |
+  ...
+    originalField?: string;          // 聚合/展开列的源字段
+    source?: 'data'                  // 原始数据列
+          | 'aggregate'              // 聚合结果
+          | 'ref_follow';            // ref 展开列
+  }
+
+  interface PageInfo {
+    offset: number;
+    limit: number;
+    hasMore: boolean;                // 是否有下一页
+  }
+
+  示例返回：
+
+  {
+    "columns": [
+      { "name": "日期", "type": "date", "source": "data" },
+      { "name": "金额", "type": "decimal", "source": "data" },
+      { "name": "total", "type": "decimal", "source": "aggregate",
+  "originalField": "金额" }
+    ],
+    "rows": [
+      { "日期": "2024-06-01", "金额": -4500 },
+      { "日期": "2024-06-02", "金额": -12800 }
+    ],
+    "total": 156,
+    "page": { "offset": 0, "limit": 20, "hasMore": true }
+  }
+
+  decimal 显示值：返回时已从整数还原为格式化字符串。引擎内部
+  -1650（分），ResultSet 中 "-16.50"。视图层不需要知道精度细节。
+
+  这个可以吗？
+
+✻ Baked for 13s
+
+> 可以                                                                          
+
+  Thought for 5s (ctrl+o to expand)
+
+● 好，核心数据结构都通过了。接下来——
+
+  第六节：查询引擎模块架构与集成
+
+  查询引擎在现有架构中的位置：
+
+  ┌──────────────────────────────────────────────┐
+  │                  视图层                        │
+  │       Query Object → query() → ResultSet       │
+  └──────────────────┬───────────────────────────┘
+                     │
+  ┌──────────────────▼───────────────────────────┐
+  │              查询引擎 (本次设计)                 │
+  │  ┌──────────┬───────────┬──────────────────┐  │
+  │  │ Query    │ SQL       │ Result           │  │
+  │  │ Validator│ Generator │ Assembler        │  │
+  │  └──────────┴───────────┴──────────────────┘  │
+  └──────────────────┬───────────────────────────┘
+                     │
+  ┌──────────────────▼───────────────────────────┐
+  │            存储引擎（已设计）                     │
+  │  内存 SQLite + 绑定表 + 用户表                   │
+  └──────────────────────────────────────────────┘
+
+  三个子模块：
+
+  模块: QueryValidator
+  输入: Query 对象
+  输出: 验证后的 Query 或错误列表
+  职责: 检查表是否存在、列名有效、操作符与类型兼容
+  ────────────────────────────────────────
+  模块: SQLGenerator
+  输入: 已验证的 Query
+  输出: SQL 字符串 + 展开后处理指令
+  职责: 递归遍历 FilterGroup、生成聚合/排序/分页子句
+  ────────────────────────────────────────
+  模块: ResultAssembler
+  输入: sql.js 执行结果 + 列元信息
+  输出: ResultSet
+  职责: 构建 ColumnMeta、执行 ref 跟随的 step 2、decimal 格式化
+
+  顶层 API：
+
+  // 引擎暴露的唯一查询入口
+  interface QueryEngine {
+    query(q: Query): ResultOrError;
+    // raw SQL escape hatch
+    queryRaw(sql: string, params?: any[]): ResultOrError;
+  }
+
+  type ResultOrError =
+    | { ok: true; result: ResultSet }
+    | { ok: false; errors: QueryError[] };
+
+  两个设计决定征求你意见：
+
+  1. raw SQL 到底怎么走：是 Query 对象里设 raw
+  字段让它和结构化字段互斥？还是独立方法
+  queryRaw()？我倾向独立方法——类型安全更干净，Query.raw 存在时 API 语义不统一
+  2. query() 是否需要 params（参数化查询）：结构化 Query 对象已经防注入了，但
+  queryRaw 需要。我倾向 query(q) 不需要 params，queryRaw(sql, params) 需要
+✻ Baked for 34s
+
+● Background command "Start visual companion server for brainstorming" completed
+(exit code 0)
+
+  Thought for 1m 46s (ctrl+o to expand)
+
+● 服务器已就绪（稍后如果需要画架构图可以用）。
+
+  回到刚才的两个问题，等你的意见：
+
+  1. raw SQL 走独立方法 queryRaw() 而非 Query.raw 字段 —— 同意吗？
+  2. query() 不需要 params，queryRaw(sql, params) 需要 —— 同意吗？
+
+✻ Worked for 1m 48s
+
+> 同意                                                                          
+
+  Thought for 7s (ctrl+o to expand)
+
+● 好。下一节——
+
+  第七节：查询验证规则
+
+  QueryValidator 在生成 SQL 之前检查：
+
+  interface QueryError {
+    code: QueryErrorCode;
+    message: string;           // 人类可读
+    field?: string;            // 出错的 Query 字段路径，如 
+  'filter.conditions[2].field'
+  }
+
+  enum QueryErrorCode {
+    TABLE_NOT_FOUND = 'TABLE_NOT_FOUND',
+    FIELD_NOT_FOUND = 'FIELD_NOT_FOUND',
+    INVALID_OPERATOR = 'INVALID_OPERATOR',
+    INVALID_VALUE_TYPE = 'INVALID_VALUE_TYPE',
+    REF_FIELD_NOT_FOUND = 'REF_FIELD_NOT_FOUND',
+    AGGREGATE_WITHOUT_GROUPBY = 'AGGREGATE_WITHOUT_GROUPBY',
+    SYNTAX_ERROR = 'SYNTAX_ERROR',            // raw SQL 解析失败
+  }
+
+  逐条验证规则：
+
+  ┌─────┬─────────────────────┬─────────────────┬───────────────────────────┐
+  │  #  │       检查项        │    何时触发     │          错误码           │
+  ├─────┼─────────────────────┼─────────────────┼───────────────────────────┤
+  │ 1   │ table 是否存在      │ 绑定表中无此表  │ TABLE_NOT_FOUND           │
+  ├─────┼─────────────────────┼─────────────────┼───────────────────────────┤
+  │ 2   │ filter 中的 field   │ 列名拼写错误    │ FIELD_NOT_FOUND           │
+  │     │ 是否在 Schema 中    │                 │                           │
+  ├─────┼─────────────────────┼─────────────────┼───────────────────────────┤
+  │ 3   │ op                  │ 如对 string     │ INVALID_OPERATOR          │
+  │     │ 与字段类型是否兼容  │ 字段用 >        │                           │
+  ├─────┼─────────────────────┼─────────────────┼───────────────────────────┤
+  │ 4   │ value 类型是否匹配  │ 如对 decimal    │ INVALID_VALUE_TYPE        │
+  │     │                     │ 传字符串 "abc"  │                           │
+  ├─────┼─────────────────────┼─────────────────┼───────────────────────────┤
+  │ 5   │ followRefs[].field  │ 对普通 string   │ REF_FIELD_NOT_FOUND       │
+  │     │ 是否为 ref() 类型   │ 字段用 ref 展开 │                           │
+  ├─────┼─────────────────────┼─────────────────┼───────────────────────────┤
+  │ 6   │ aggregates 存在时   │ 聚合必须有分组  │ AGGREGATE_WITHOUT_GROUPBY │
+  │     │ groupBy 非空        │                 │                           │
+  ├─────┼─────────────────────┼─────────────────┼───────────────────────────┤
+  │ 7   │ raw SQL 语法可解析  │ sql.js prepare  │ SYNTAX_ERROR              │
+  │     │                     │ 失败            │                           │
+  └─────┴─────────────────────┴─────────────────┴───────────────────────────┘
+
+  验证时机：query() 调用时同步执行，验证失败返回 { ok: false, errors }，不触达
+  SQLite。
+
+  宽松原则：验证器只检查结构合法性，不做语义优化建议（如"缺少索引"留到后期）。WH
+  ERE 条件运行时匹配不到行是正常结果，不是错误。
+
+  这个可以吗？
+
+✻ Baked for 19s
+
+> 可以                                                                          
+
+  Thought for 6s (ctrl+o to expand)
+
+● 核心模型都通过了。还差几个小但重要的定义：
+
+  第八节：SelectClause 和 SortClause
+
+  之前用了但没正式定义：
+
+  // 选择列——不指定则返回全部列
+  interface SelectClause {
+    fields: string[];                // 要返回的列名列表
+    // 后期可扩展表达式，如 { expr: '金额 / 100', alias: '金额_元' }
+  }
+
+  // 排序
+  interface SortClause {
+    field: string;                   // 列名
+    dir: 'asc' | 'desc';
+  }
+
+  select 验证：
+  - 列名必须在 Schema 中存在
+  - groupBy 查询中，select 的非聚合列必须在 groupBy 中出现（标准 SQL 语义）
+  - 如果 Query 有 followRefs 且未指定 select，展开列自动追加到结果中
+
+  sort 验证：
+  - 列名必须在 Schema 中存在
+  - 未指定时，默认按 Schema 的 @sort 声明排序
+  - @sort 也不存在时，按写入时序（即 _binding.line_number）
+
+  ---
+  第九节：边缘情况处理
+
+  ┌────────────────────────┬─────────────────────────────────────────────────┐
+  │          场景          │                      行为                       │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ 表不存在               │ 验证阶段返回 TABLE_NOT_FOUND error              │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ 表存在但为空（0 行）   │ 正常返回 { rows: [], total: 0, columns: [...] } │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ filter 匹配 0 行       │ 正常返回 { rows: [], total: 0 }，不是 error     │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ limit=0                │ 返回空 rows + total + hasMore: true/false       │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ offset >= total        │ 返回空 rows + total 不变 + hasMore: false       │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ ref 跟随的目标表不存在 │ 该字段展开列全 NULL，warning 记录到日志         │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ decimal 格式化异常     │ 内部整数无法格式化 → 返回原始整数值 + warning   │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ raw SQL 语法错误       │ sql.js 抛异常 → 捕获 → 返回 SYNTAX_ERROR        │
+  └────────────────────────┴─────────────────────────────────────────────────┘
+
+  10 条决策。这两节还有需要调整的吗？
+
+✻ Worked for 18s
+
+> 暂时不需要调整                                                                
+
+  Thought for 9s (ctrl+o to expand)
+
+● 全票通过。来快速收尾：
+
+  ---
+  最终确认
+
+  查询引擎设计总计 16 项决策：
+
+  ┌─────┬──────────────────────┬─────────────────────────────────────────────┐
+  │  #  │         决策         │                    结论                     │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 1   │ 主要用户             │ 视图层（B），终端用户 DQL 远期              │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 2   │ API 抽象层次         │ 结构化查询对象 (C) + raw SQL escape hatch   │
+  │     │                      │ (A)                                         │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 3   │ 查询对象表达能力边界 │ 单表/过滤/聚合/ref跟随 ∈                    │
+  │     │                      │ C；JOIN/子查询/窗口函数 ∈ raw SQL           │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 4   │ 结果格式             │ ResultSet { rows, columns, total, page }    │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 5   │ 执行模型             │ 同步，未来按需加异步                        │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 6   │ 过滤模型             │ 递归 FilterGroup（AND/OR 树）+              │
+  │     │                      │ FilterCondition（11 种操作符）              │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 7   │ 聚合模型             │ groupBy + aggregates[] + having（复用       │
+  │     │                      │ FilterGroup）                               │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 8   │ ref 跟随             │ 两步查询，不破坏原始 ref 值，断裂不报错     │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 9   │ raw SQL 入口         │ 独立方法 queryRaw(sql, params)              │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 10  │ 参数化查询           │ query() 不需要 params，queryRaw() 需要      │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 11  │ 验证策略             │ 7 条验证规则，宽松模式——只查结构合法性      │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 12  │ 模块架构             │ QueryValidator → SQLGenerator →             │
+  │     │                      │ ResultAssembler                             │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 13  │ SelectClause         │ 列名列表，后期可扩展表达式                  │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 14  │ SortClause           │ field + dir，默认走 @sort → 写入时序        │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 15  │ decimal 显示         │ 引擎内部整数 → ResultSet                    │
+  │     │                      │ 格式化字符串，视图层无感知                  │
+  ├─────┼──────────────────────┼─────────────────────────────────────────────┤
+  │ 16  │ 边缘情况             │ 空表/无匹配/越界=正常空结果；ref            │
+  │     │                      │ 断裂=NULL+warning                           │
+  └─────┴──────────────────────┴─────────────────────────────────────────────┘
+
+  ---
+  如果确认无误，我写入设计文档到
+  docs/specs/2026-06-10-query-engine-design.md，补充到实施路线图的 Phase
+  15。可以吗？
+
+✻ Sautéed for 19s
+
+> 同意                                                                          
+  Thought for 3s (ctrl+o to expand)
+
+  Thought for 1s (ctrl+o to expand)
+
+● Write(docs\specs\2026-06-10-query-engine-design.md)
+  ⎿  Error: [Fact-Forcing Gate]
+
+     Before creating 
+     C:\Users\cgf\Desktop\MDDB\docs\specs\2026-06-10-query-engine-design.md, 
+     present these facts:
+
+     1. Name the file(s) and line(s) that will call this new file
+     2. Confirm no existing file serves the same purpose (use Glob)
+     3. If this file reads/writes data files, show field names, structure, and 
+     date format (use redacted or synthetic values, not raw production data)
+     4. Quote the user's current instruction verbatim
+
+     Present the facts, then retry the same operation.
+
+  Thought for 3s (ctrl+o to expand)
+
+● 1. 下游引用：docs/specs/2026-06-10-implementation-roadmap.md Phase
+  15（查询引擎）将引用此文件
+  2. 冲突检查：docs/specs/ 下仅有三份文档（storage-engine-design.md、parse-pipel
+  ine-design.md、implementation-roadmap.md），无查询引擎设计文档
+  3. 数据文件：此为纯设计规范文档，不涉及数据读写
+  4. 用户指令：「同意」— 确认 16 项决策，授权写入设计文档
+
+● Write(docs\specs\2026-06-10-query-engine-design.md)
+  ⎿  Wrote 525 lines to docs\specs\2026-06-10-query-engine-design.md
+      1 # MD-DB 查询引擎设计文档 v1.0
+      2 
+      3 > 日期：2026-06-10
+      4 > 状态：草案 — 查询引擎完整设计
+      5 > 依赖：`2026-06-10-storage-engine-design.md`（存储引擎）、`2026-
+        06-10-parse-pipeline-design.md`（解析管道）
+      6 
+      7 ---
+      8 
+      9 ## 一、设计概述
+     … +565 lines (ctrl+o to expand)
+
+  Thought for 8s (ctrl+o to expand)
+
+● 文档已写入。Spec 自审通过：
+
+  ┌─────────────┬───────────────────────────────────────────────────┐
+  │   检查项    │                       结果                        │
+  ├─────────────┼───────────────────────────────────────────────────┤
+  │ 无 TBD/TODO │             ✅ 待设计项明确列出在 §15             │
+  ├─────────────┼───────────────────────────────────────────────────┤
+  │ 内部一致性  │    ✅ Query → FilterGroup → ResultSet 链路完整    │
+  ├─────────────┼───────────────────────────────────────────────────┤
+  │ 范围控制    │       ✅ 聚焦查询引擎，依赖外部模块明确标注       │
+  ├─────────────┼───────────────────────────────────────────────────┤
+  │ 无歧义      │ ✅ 表达式边界、边缘行为、decimal 显示全部显式决策 │
+  └─────────────┴───────────────────────────────────────────────────┘
+
+  ---
+  docs/specs/2026-06-10-query-engine-design.md — 16 项决策，15
+  节。请审阅，有需要调整的地方吗？
+
+✻ Cogitated for 2m 35s
+
+> 没有调整                                                                      
+
+  Thought for 2s (ctrl+o to expand)
+
+● 好。按 brainstorming 流程，下一步是写实施计划。
+
+● Skill(superpowers:writing-plans)
+  ⎿  Successfully loaded skill
+
+  Thought for 16s (ctrl+o to expand)
+
+● I'm using the writing-plans skill to create the implementation plan.
+
+  先确认文件结构，再拆任务。
+
+  Thought for 2s, read 1 file (ctrl+o to expand)
+
+● Write(docs\superpowers\plans\2026-06-10-query-engine-implementation.md)
+  ⎿  Error: [Fact-Forcing Gate]
+
+     Before creating C:\Users\cgf\Desktop\MDDB\docs\superpowers\plans\2026-06-10
+     -query-engine-implementation.md, present these facts:
+
+     1. Name the file(s) and line(s) that will call this new file
+     2. Confirm no existing file serves the same purpose (use Glob)
+     3. If this file reads/writes data files, show field names, structure, and 
+     date format (use redacted or synthetic values, not raw production data)
+     4. Quote the user's current instruction verbatim
+
+     Present the facts, then retry the same operation.
+  Thought for 3s (ctrl+o to expand)
+
+● 1. 下游引用：实施路线图 docs/specs/2026-06-10-implementation-roadmap.md Phase
+  15 将链接此计划文件
+  2. 冲突检查：正在检查
+
+  Thought for 2s, searched for 1 pattern (ctrl+o to expand)
+
+● 3. 数据文件：此为实施计划文档，不涉及数据读写
+  4. 用户指令：「同意」— 确认 16 项决策，授权写入设计文档并启动实施计划编写
+
+  无冲突，写入计划文件。
+
+> /rename 
+  ⎿  Could not generate a name: no conversation context yet. Usage: /rename <name>
+
+> /rename query-engine 
+  ⎿  Session renamed to: query-engine
+
+> 更新 @docs\specs\2026-06-10-implementation-roadmap.md                         
+  ⎿  Read docs\specs\2026-06-10-implementation-roadmap.md (887 lines)
+
+  Thought for 17s (ctrl+o to expand)
+
+● 先写实施计划，再更新路线图。
+
+● Write(docs\superpowers\plans\2026-06-10-query-engine-implementation.md)
+  ⎿  Wrote 1666 lines to
+     docs\superpowers\plans\2026-06-10-query-engine-implementation.md
+      2 # Query Engine Implementation Plan
+        bagent-driven-development (recommended) or superpowers:executing-
+        plans to implement this plan task-by-task. Steps use checkbox (`-
+      4  [ ]`) syntax for tracking.
+      5 **Goal:** Implement the MD-DB query engine — translate structured
+        rn standardized ResultSets.ute against in-memory SQLite, and retu
+      7 **Architecture:** Three-stage pipeline: QueryValidator (structura
+        l validation) → SQLGenerator (Query → SQL + post-processing instr
+        al formatting and ref following). Exposed via a single `QueryEngi
+        ne` class w
+     … +1749 lines (ctrl+o to expand)
+
+  Thought for 3s (ctrl+o to expand)
+
+● 现在更新路线图。
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Error: [Fact-Forcing Gate]
+
+     Before editing 
+     C:\Users\cgf\Desktop\MDDB\docs\specs\2026-06-10-implementation-roadmap.md, 
+     present these facts:
+
+     1. List ALL files that import/require this file (use Grep)
+     2. List the public functions/classes affected by this change
+     3. If this file reads/writes data files, show field names, structure, and 
+     date format (use redacted or synthetic values, not raw production data)
+     4. Quote the user's current instruction verbatim
+
+     Present the facts, then retry the same operation.
+
+  Thought for 3s (ctrl+o to expand)
+
+● 1. 引用检查：这是 Markdown 文档，无代码导入关系
+
+  Thought for 20s, searched for 1 pattern (ctrl+o to expand)
+
+● 2. 无函数/类——纯 Markdown 规范文档
+  3. 无数据文件读写
+  4. 用户指令：更新 @docs\specs\2026-06-10-implementation-roadmap.md
+
+  现在执行编辑。
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 1 line, removed 1 line
+      38  | 存储引擎底层架构 | ✅ 已设计 | `storage-engine-design.md` §1-
+          8 |
+      39  | 数据格式 + Schema + 类型 | ✅ 已设计 | `storage-engine-design
+          .md` §9-10 |
+      40  | 解析管道 | ✅ 已设计 | `parse-pipeline-design.md` §1-8 |
+      41 -| 查询引擎 | ⬜ 待设计 | — |                                   
+      41 +| 查询引擎 | ✅ 已设计 | `query-engine-design.md` |            
+      42  | 事务模型 | ⬜ 待设计 | — |
+      43  | 视图层接口 | ⬜ 待设计 | — |
+      44  | 多文件表 | ⬜ 待设计 | — |
+
+  Thought for 2s (ctrl+o to expand)
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 44 lines, removed 10 lines
+      629  
+      630  ---
+      631  
+      632 -### Phase 15: 查询引擎 ⬜                                     
+      632 +### Phase 15: 查询引擎 ✅                                     
+      633  
+      634  | 属性 | 内容 |
+      635  |------|------|
+      636 -| **目标** | SQL/DQL 语法解析、优化、执行 |                   
+      637 -| **依赖** | Phase 9 |                                        
+      638 -| **状态** | **⬜ 需要先设计** |                              
+      636 +| **目标** | 实现结构化查询对象 → SQL 翻译 → 标准化 ResultSet 
+          +的完整查询引擎 |                                              
+      637 +| **依赖** | Phase 9 (CRUD), Phase 2 (SQLite 基础设施) |      
+      638 +| **状态** | ✅ 可直接实施 |                                  
+      639 +| **设计参考** | `docs/specs/2026-06-10-query-engine-design.md
+          +` (16 项决策) |                                               
+      640 +| **实施计划** | `docs/superpowers/plans/2026-06-10-query-engi
+          +ne-implementation.md` |                                       
+      641  
+      640 -**待决策**：                                                  
+      641 -- 查询语法：完整 SQL 子集？类 Dataview DQL？两者都支持？      
+      642 -- 解析器：手写递归下降 或 ANTLR/Peg.js？                      
+      643 -- 优化器：基于成本 vs 基于规则？                              
+      644 -- 执行引擎：表扫描 / 索引扫描 / JOIN 策略 / 聚合下推          
+      645 -- 结果格式：JSON / Markdown 表格 / CSV                        
+      642 +**产出清单**：                                                
+      643 +```                                                           
+      644 +src/query/                                                    
+      645 +├── types.ts              # Query, FilterGroup, ResultSet 等所
+          +有类型定义                                                    
+      646 +├── validator.ts          # QueryValidator — 7 条验证规则     
+      647 +├── sql-generator.ts      # SQLGenerator — Query → SQL 字符串 
+      648 +├── assembler.ts          # ResultAssembler — 原始结果 → Resul
+          +tSet                                                          
+      649 +└── engine.ts             # QueryEngine — 顶层 API (query + qu
+          +eryRaw)                                                       
+      650 +```                                                           
+      651  
+      652 +**关键实现要点**：                                            
+      653 +                                                              
+      654 +- **顶层 API**：`QueryEngine.query(q: Query): ResultOrError`  
+          +和 `QueryEngine.queryRaw(sql, params): ResultOrError`         
+      655 +- **三阶段流水线**：QueryValidator（结构验证）→ SQLGenerator（
+          +Query → SQL + 后处理指令）→ ResultAssembler（sql.js 结果格式化
+          +）                                                            
+      656 +- **过滤模型**：递归 FilterGroup 树翻译为 WHERE 子句，支持 AND
+          +/OR 嵌套 + 11 种操作符                                        
+      657 +- **聚合**：groupBy + aggregates[]，HAVING 复用 FilterGroup   
+      658 +- **ref 跟随**：两步查询（非 SQL JOIN），断裂引用 = NULL 不报 
+          +错                                                            
+      659 +- **decimal 显示**：内部 BIGINT → ResultSet 格式化字符串，视图
+          +层无感知                                                      
+      660 +- **raw SQL**：独立 `queryRaw()` 方法，使用 prepared statement
+          + 防注入                                                       
+      661 +- **验证**：宽松模式 —— 只检查结构合法性，不匹配 = 空结果（非 
+          +错误）                                                        
+      662 +                                                              
+      663 +**实现此阶段的决策**：                                        
+      664 +                                                              
+      665 +| 决策编号 | 来源 | 内容 |                                    
+      666 +|---------|------|------|                                     
+      667 +| 查询 §1 | `query-engine-design.md` | 视图层（B）为主用户，DQ
+          +L 远期 |                                                      
+      668 +| 查询 §2 | `query-engine-design.md` | 结构化查询对象 (C) + ra
+          +w SQL escape hatch (A) |                                      
+      669 +| 查询 §3 | `query-engine-design.md` | 表达能力边界：单表/过滤
+          +/聚合/ref ∈ C；JOIN/子查询 ∈ raw |                            
+      670 +| 查询 §4 | `query-engine-design.md` | ResultSet `{ rows, colu
+          +mns, total, page }` |                                         
+      671 +| 查询 §5 | `query-engine-design.md` | 同步执行模型 |         
+      672 +| 查询 §6 | `query-engine-design.md` | 递归 FilterGroup + 11  
+          +种操作符 |                                                    
+      673 +| 查询 §7 | `query-engine-design.md` | groupBy + aggregates[] 
+          ++ having |                                                    
+      674 +| 查询 §8 | `query-engine-design.md` | ref 跟随：两步查询，断 
+          +裂 = NULL |                                                   
+      675 +| 查询 §9 | `query-engine-design.md` | raw SQL = 独立方法 `que
+          +ryRaw()` |                                                    
+      676 +| 查询 §10 | `query-engine-design.md` | raw SQL 需要 params， 
+          +结构化不需要 |                                                
+      677 +| 查询 §11 | `query-engine-design.md` | 7 条验证规则，宽松模式
+          + |                                                            
+      678 +| 查询 §12 | `query-engine-design.md` | Validator → Generator 
+          +→ Assembler 模块架构 |                                        
+      679 +| 查询 §13-16 | `query-engine-design.md` | SelectClause、SortC
+          +lause、decimal、边缘情况 |                                    
+      680 +                                                              
+      681  ---
+      682  
+      683  ### Phase 16: 事务模型 ⬜
+  Thought for 4s (ctrl+o to expand)
+
+● 继续更新依赖图和计数。
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 1 line, removed 1 line
+      800      │                                        │       │       │
+      801      │                                        │       ├── Phase
+            14: Status Bar
+      802      │                                        │       │
+      803 -    │                                        │  Phase 15: Quer
+          -y Engine ⬜                                                   
+      803 +    │                                        │  Phase 15: Quer
+          +y Engine ✅                                                   
+      804      │                                        │       │
+      805      │                                        │       ├── Phase
+            17: View API ⬜
+      806      │                                        │       │
+
+  Thought for 2s (ctrl+o to expand)
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 2 lines, removed 2 lines
+      810      │
+      811      └── Phase 20: Settings + UX
+      812  
+      813 -    Ready to implement: Phases 0-14, 20  (✅ 15 phases)       
+      814 -    Needs design first: Phases 15-19     (⬜ 5 phases)        
+      813 +    Ready to implement: Phases 0-15, 20  (✅ 16 phases)       
+      814 +    Needs design first: Phases 16-19     (⬜ 4 phases)        
+      815  ```
+      816  
+      817  ---
+
+  Thought for 3s (ctrl+o to expand)
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # MD-DB 实施路线图 v1.0
+      2  
+      3  > 日期：2026-06-10
+      4 -> 基于：`2026-06-10-storage-engine-design.md` (16 项决策)、`2026
+        --06-10-parse-pipeline-design.md` (17 项决策)                    
+      4 +> 基于：`2026-06-10-storage-engine-design.md` (16 项决策)、`2026
+        +-06-10-parse-pipeline-design.md` (17 项决策)、`2026-06-10-query-
+        +engine-design.md` (16 项决策)                                   
+      5  > 用途：为其他 session 或 subagent 提供可独立执行的任务单元
+      6  
+      7  ---
+
+  Thought for 2s (ctrl+o to expand)
+
+● Update(docs\specs\2026-06-10-implementation-roadmap.md)
+  ⎿  Added 2 lines, removed 1 line
+      915  |------|------|------|
+      916  | 存储引擎设计 | `docs/specs/2026-06-10-storage-engine-design.
+           md` | 架构、PK、CRUD、WAL、冷启动 |
+      917  | 解析管道设计 | `docs/specs/2026-06-10-parse-pipeline-design.
+           md` | 6 阶段解析流程 |
+      918 +| 查询引擎设计 | `docs/specs/2026-06-10-query-engine-design.md
+          +` | 结构化查询、过滤、聚合、ref 跟随 |                        
+      919 +| 查询引擎实施计划 | `docs/superpowers/plans/2026-06-10-query-
+          +engine-implementation.md` | 7 任务、40 测试 |                 
+      920  | 架构构思 | `构思v1.0.md` | 原始设计讨论、视图层、路线图 |
+      919 -| 原始讨论 | `markdown数据库.md` | 完整对话记录 |             
+      921  | **本文档** | `docs/specs/2026-06-10-implementation-roadmap.m
+           d` | 实施路线图 |
+
+  Thought for 7s (ctrl+o to expand)
+
+● 全部更新完成。总结本次产出：
+
+  ---
+  本轮成果
+
+  ┌───────────────┬─────────────────────────────────────────────────────────┐
+  │     产出      │                          路径                           │
+  ├───────────────┼─────────────────────────────────────────────────────────┤
+  │ 查询引擎设计  │                                                         │
+  │ 文档 (16      │ docs/specs/2026-06-10-query-engine-design.md            │
+  │ 项决策)       │                                                         │
+  ├───────────────┼─────────────────────────────────────────────────────────┤
+  │ 查询引擎实施  │ docs/superpowers/plans/2026-06-10-query-engine-implemen │
+  │ 计划 (7 任务, │ tation.md                                               │
+  │  40 测试)     │                                                         │
+  ├───────────────┼─────────────────────────────────────────────────────────┤
+  │ 实施路线图    │ docs/specs/2026-06-10-implementation-roadmap.md         │
+  │ Phase 15 更新 │                                                         │
+  └───────────────┴─────────────────────────────────────────────────────────┘
+
+  路线图状态变化：Ready to implement: 15 → 16 phases | Needs design: 5 → 4 
+  phases
+
+  ---
+  执行选择
+
+  Plan complete. Two execution options:
+
+  1. Subagent-Driven (推荐) — 每个任务独立 subagent，任务间 review，快速迭代
+  2. Inline Execution — 在当前 session 中逐步执行，批量推进
+
+  你选哪种？还是先回到设计讨论（事务模型 / 视图层 API /
+  多文件表）继续推进下一模块的设计？
+
+✻ Churned for 4m 39s

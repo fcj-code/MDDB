@@ -191,6 +191,12 @@ export class BindingStore {
     return result.rows.length > 0 ? Number(result.rows[0]![0]) : 0;
   }
 
+  /** 清除所有绑定记录 */
+  clearAll(): void {
+    this.assertReady();
+    this.sqlite.run('DELETE FROM _binding');
+  }
+
   // ============================================================
   // 内部方法
   // ============================================================

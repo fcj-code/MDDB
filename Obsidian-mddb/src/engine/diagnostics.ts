@@ -120,6 +120,12 @@ export class DiagnosticsManager {
     return this.errorsLog.length;
   }
 
+  /** 清除所有日志 */
+  clearLogs(): void {
+    this.errorsLog = [];
+    this.lastError = null;
+  }
+
   getDiagnostics(
     tableCount: number,
     rowCount: number,
