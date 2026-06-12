@@ -16,6 +16,18 @@ class MockEngine {
     return this.queryHandler?.(q) ?? { ok: false, error: { message: 'no handler' } };
   }
 
+  update(_storagePk: string, _patch: unknown): Promise<unknown> {
+    return Promise.resolve({ ok: true });
+  }
+
+  delete(_storagePk: string): Promise<unknown> {
+    return Promise.resolve({ ok: true });
+  }
+
+  insert(_table: string, _values: unknown): Promise<unknown> {
+    return Promise.resolve({ ok: true });
+  }
+
   on(_event: string, _handler: (...args: unknown[]) => void): Disposable {
     return { dispose: () => {} };
   }
@@ -149,5 +161,146 @@ describe('TableViewModel', () => {
 
     await vm.refresh();
     expect(queryCount).toBe(1);
+  });
+});
+
+describe('TableViewModel - Editing', () => {
+  let engine: MockEngine;
+
+  beforeEach(() => {
+    engine = new MockEngine();
+    engine.setQueryHandler(() => ({
+      ok: true,
+      value: {
+        rows: [
+          { name: 'Alice', type: 'savings', balance: 1000 },
+          { name: 'Bob', type: 'checking', balance: 500 },
+        ],
+        columns: [
+          { name: 'name', type: 'string' },
+          { name: 'type', type: 'string' },
+          { name: 'balance', type: 'decimal(2)' },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        returned: 2,
+        queryInfo: { table: 'accounts', hasMore: false, durationMs: 5 },
+      } as ResultSet,
+    }));
+  });
+
+  it('starts editing a cell', async () => {
+    const { TableViewModel } = await import('./table-view-model');
+    const vm = new TableViewModel('test', engine as any, { table: 'accounts', columns: ['name', 'balance'] });
+    await vm.initialize();
+
+    vm.startEdit(0, 'name');
+    expect(vm.editingCell).not.toBeNull();
+    expect(vm.editingCell!.rowIndex).toBe(0);
+    expect(vm.editingCell!.col).toBe('name');
+  });
+
+  it('cancels editing restores original value', async () => {
+    const { TableViewModel } = await import('./table-view-model');
+    const vm = new TableViewModel('test', engine as any, { table: 'accounts', columns: ['name', 'balance'] });
+    await vm.initialize();
+
+    vm.startEdit(0, 'name');
+    vm.cancelEdit();
+    expect(vm.editingCell).toBeNull();
+  });
+});
+
+describe('TableViewModel - Column Visibility', () => {
+  let engine: MockEngine;
+
+  beforeEach(() => {
+    engine = new MockEngine();
+    engine.setQueryHandler(() => ({
+      ok: true,
+      value: {
+        rows: [
+          { name: 'Alice', type: 'savings', balance: 1000 },
+          { name: 'Bob', type: 'checking', balance: 500 },
+        ],
+        columns: [
+          { name: 'name', type: 'string' },
+          { name: 'type', type: 'string' },
+          { name: 'balance', type: 'decimal(2)' },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        returned: 2,
+        queryInfo: { table: 'accounts', hasMore: false, durationMs: 5 },
+      } as ResultSet,
+    }));
+  });
+
+  it('toggles column visibility', async () => {
+    const { TableViewModel } = await import('./table-view-model');
+    const vm = new TableViewModel('test', engine as any, { table: 'accounts', columns: ['name', 'balance'] });
+    await vm.initialize();
+
+    expect(vm.isColumnVisible('name')).toBe(true);
+    vm.toggleColumn('name');
+    expect(vm.isColumnVisible('name')).toBe(false);
+    vm.toggleColumn('name');
+    expect(vm.isColumnVisible('name')).toBe(true);
+  });
+
+  it('hides and shows all columns', async () => {
+    const { TableViewModel } = await import('./table-view-model');
+    const vm = new TableViewModel('test', engine as any, { table: 'accounts', columns: ['name', 'balance'] });
+    await vm.initialize();
+
+    vm.hideColumn('name');
+    expect(vm.isColumnVisible('name')).toBe(false);
+    vm.showAllColumns();
+    expect(vm.isColumnVisible('name')).toBe(true);
+    expect(vm.isColumnVisible('balance')).toBe(true);
+  });
+});
+
+describe('TableViewModel - CRUD', () => {
+  let engine: MockEngine;
+
+  beforeEach(() => {
+    engine = new MockEngine();
+    engine.setQueryHandler(() => ({
+      ok: true,
+      value: {
+        rows: [
+          { name: 'Alice', type: 'savings', balance: 1000, storage_pk: 'pk-1' },
+          { name: 'Bob', type: 'checking', balance: 500, storage_pk: 'pk-2' },
+        ],
+        columns: [
+          { name: 'name', type: 'string' },
+          { name: 'type', type: 'string' },
+          { name: 'balance', type: 'decimal(2)' },
+          { name: 'storage_pk', type: 'string' },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        returned: 2,
+        queryInfo: { table: 'accounts', hasMore: false, durationMs: 5 },
+      } as ResultSet,
+    }));
+  });
+
+  it('toggles action menu', async () => {
+    const { TableViewModel } = await import('./table-view-model');
+    const vm = new TableViewModel('test', engine as any, { table: 'accounts', columns: ['name', 'balance'] });
+    await vm.initialize();
+
+    vm.toggleActionMenu('test-pk');
+    expect(vm.actionMenuRow).toBe('test-pk');
+    vm.toggleActionMenu('test-pk');
+    expect(vm.actionMenuRow).toBeNull();
   });
 });
