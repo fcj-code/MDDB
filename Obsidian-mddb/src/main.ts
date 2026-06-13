@@ -9,6 +9,9 @@ import { InlineTableRenderer } from './view/table/inline-renderer';
 import { parseTableBlock } from './view/parser';
 import type { VaultScanResult } from './parse/pipeline';
 import { FormBuilder } from './view/shared/form-builder';
+import { KanbanViewModel } from './view/kanban/kanban-view-model';
+import { InlineKanbanRenderer } from './view/kanban/inline-renderer';
+import { parseKanbanBlock } from './view/kanban/parser';
 
 // sql.js JS 在 esbuild 打包时内联，WASM 通过 fs.readFileSync 加载
 // （__dirname 在 Obsidian Electron 中不可靠，且 file:// 被安全策略阻止）
@@ -143,6 +146,30 @@ export default class MDDBPlugin extends Plugin {
         renderer.mount();
         (el as any).__mddbRenderer = renderer;
         (el as any).__mddbViewModel = vm;
+      });
+    });
+
+    // ── mddb-kanban 代码块处理器 ──
+    this.registerMarkdownCodeBlockProcessor('mddb-kanban', (source, el) => {
+      if (el.hasClass('mddb-rendered')) return;
+      el.addClass('mddb-rendered');
+      el.empty();
+
+      const result = parseKanbanBlock(source);
+      if (!result.success || !result.config) {
+        el.createEl('div', {
+          cls: 'mddb-error',
+          text: `MD-DB parse error:\n${result.errors.join('\n')}`,
+        });
+        return;
+      }
+
+      const vm = new KanbanViewModel(`kanban-${Date.now()}`, this.engine, result.config);
+      vm.initialize().then(() => {
+        const renderer = new InlineKanbanRenderer(vm, el);
+        renderer.mount();
+        (el as any).__mddbKanbanRenderer = renderer;
+        (el as any).__mddbKanbanViewModel = vm;
       });
     });
 

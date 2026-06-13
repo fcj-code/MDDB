@@ -11,6 +11,9 @@ import { TABLE_VIEW_TYPE, TableView } from './table/table-view';
 import { parseTableBlock } from './parser';
 import type { ViewConfig } from '../query/types';
 import type { MDDBEngine } from '../engine/engine';
+import { KANBAN_VIEW_TYPE, KanbanView } from './kanban/kanban-view';
+import { parseKanbanBlock } from './kanban/parser';
+import type { KanbanConfig } from './kanban/kanban-config';
 
 // ============================================================
 // 视图注册器
@@ -35,6 +38,15 @@ export class ViewIntegration {
         table: '',
         columns: [],
         readonly: true,
+      }),
+    );
+
+    this.plugin.registerView(
+      KANBAN_VIEW_TYPE,
+      (leaf) => new KanbanView(leaf, this.engine, {
+        table: '',
+        columns: [],
+        groupBy: '',
       }),
     );
   }
@@ -70,5 +82,30 @@ export class ViewIntegration {
    */
   parseBlock(blockContent: string) {
     return parseTableBlock(blockContent);
+  }
+
+  /**
+   * 打开看板视图
+   */
+  async openKanbanView(config: KanbanConfig): Promise<void> {
+    const leaf = this.plugin.app.workspace.getLeaf(true);
+    const view = new KanbanView(leaf, this.engine, config);
+    leaf.setViewState({
+      type: KANBAN_VIEW_TYPE,
+      active: true,
+    });
+  }
+
+  /**
+   * 从代码块内容创建看板视图
+   */
+  async openKanbanFromBlock(blockContent: string): Promise<void> {
+    const result = parseKanbanBlock(blockContent);
+    if (!result.success) {
+      throw new Error(`Failed to parse mddb-kanban block:\n${result.errors.join('\n')}`);
+    }
+    if (result.config) {
+      await this.openKanbanView(result.config);
+    }
   }
 }
