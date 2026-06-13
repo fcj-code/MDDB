@@ -98,6 +98,10 @@
   opacity: 0.8;
 }
 
+.mddb-kanban-lane-grip:active {
+  cursor: grabbing;
+}
+
 .mddb-kanban-lane-collapse {
   display: flex;
   align-items: center;
