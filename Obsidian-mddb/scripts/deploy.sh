@@ -26,11 +26,14 @@ cd "$PROJECT_DIR"
 node esbuild.config.mjs production
 
 echo "📋 部署到: $TARGET"
-cp main.js manifest.json styles.css "$TARGET"
+cp main.js manifest.json "$TARGET"
+# main.css 由 esbuild 从 React 组件 CSS import 生成
+# 重命名为 styles.css 供 Obsidian 加载
+cp main.css "$TARGET/styles.css"
 
 echo "✅ 部署完成"
 echo "   main.js     $(du -h main.js | cut -f1)"
 echo "   manifest.json"
-echo "   styles.css"
+echo "   styles.css  $(du -h main.css | cut -f1)"
 echo ""
 echo "🔄 在 Obsidian 中重新加载插件即可生效"

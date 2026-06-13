@@ -11,7 +11,12 @@
       "Bash(git commit -m 'Task 5: mddb-table processor uses TableViewModel + InlineTableRenderer; parser.ts readonly=false *)",
       "Bash(git push *)",
       "Bash(git reset *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(bash scripts/deploy.sh)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(git commit *)"
     ]
   }
 }

@@ -547,7 +547,7 @@ export class MDDBEngine {
         throw new EngineError(`Record not found: ${_storagePk}`, 'RECORD_NOT_FOUND');
       }
 
-      const result = await this.crud.update(_storagePk, _patch);
+      const result = await this.crud.update(_storagePk, _patch, _options);
 
       this.emit('data-changed', {
         type: 'update',
@@ -580,7 +580,7 @@ export class MDDBEngine {
         throw new EngineError(`Record not found: ${_storagePk}`, 'RECORD_NOT_FOUND');
       }
 
-      const result = await this.crud.delete(_storagePk);
+      const result = await this.crud.delete(_storagePk, _options);
 
       this.emit('data-changed', {
         type: 'delete',

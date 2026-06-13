@@ -486,18 +486,30 @@ src/view/
 ├── parser.ts                # ✅ parseTableBlock + ViewConfigBuilder + parseWhere 表达式引擎
 ├── base-view-model.ts       # ✅ BaseViewModel（事件/状态管理/生命周期）
 ├── table/
-│   ├── table-view-model.ts  # ✅ TableViewModel extends BaseViewModel（分页/排序/状态管理）
-│   ├── table-view.ts        # ✅ TableView — Obsidian ItemView DOM 渲染（排序/分页/错误/空/加载态）
-│   └── table-config.ts      # ✅ TableConfig interface + 列类型→对齐猜测
+│   ├── table-view-model.ts  # ✅ TableViewModel（分页/排序/编辑/CRUD/列宽/React 桥接）
+│   ├── table-view.tsx       # ✅ TableView — Obsidian ItemView（React 渲染）
+│   ├── table-config.ts      # ✅ TableConfig interface + 列类型→对齐猜测
+│   ├── inline-renderer.tsx  # ✅ 代码块内嵌渲染器（React createRoot）
+│   └── react/               # ★ 新增 React 组件目录
+│       ├── index.tsx        #    App 入口（事件订阅 + form modal 管理）
+│       ├── action-menu.tsx  #    ⠿ 操作菜单
+│       ├── bottom-bar.tsx   #    底栏
+│       ├── form-modal.tsx   #    新增/编辑表单弹窗
+│       └── table/
+│           ├── index.tsx    #    虚拟滚动表格（react-virtuoso）
+│           ├── header-cell.tsx  # 表头（排序 + 列宽拖拽）
+│           ├── body-cell.tsx    # 类型感知编辑单元格
+│           ├── column-resize-handle.tsx  # 列宽拖拽手柄
+│           └── styles.css   #    React 表格样式
 ├── shared/
-│   ├── event-bus.ts         # ✅ 全局事件总线（精确类型 + 通配符 onAny + 异常隔离）
-│   ├── data-layer.ts        # ✅ 数据层桥接（查询/缓存/分页/排序/auto-refresh + engine 事件监听）
-│   ├── view-config.ts       # ⚠️ 未实际创建（ViewConfig 在 query/types.ts 中定义）
-│   └── types.ts             # ✅ ViewStatus、TableViewState、ViewColumn、ViewRow、ViewEvent 公共类型
-└── integration.ts           # ✅ registerViewLayer() — 注册 mddb-table / mddb-form 代码块处理器
+│   ├── event-bus.ts         # ✅ 全局事件总线
+│   ├── data-layer.ts        # ✅ 数据层桥接（查询/缓存/分页/排序/auto-refresh）
+│   ├── types.ts             # ✅ ViewStatus、TableViewState、ViewColumn、ViewRow、ViewEvent 公共类型
+│   └── form-builder.ts      # ✅ 表单控件生成器（从 main.ts 提取）
+└── integration.ts           # ✅ registerViewLayer()
 ```
 
-> 注：`form/` 目录未实际创建。表单视图通过 `main.ts` 中的 `parseFormBlock` 函数和代码块处理器直接实现（`src/main.ts:549-590`），使用独立的 DOM 构建逻辑而非 ViewModel 模式。`view-config.ts` 未创建，因为 `ViewConfig` 类型在 `query/types.ts` 中已有定义。
+> 注：表单弹窗（FormModal）使用 FormBuilder 生成 DOM 控件。`inline-renderer.ts` 和 `table-view.ts` 已重命名为 `.tsx` 以支持 JSX。`view-config.ts` 未创建，因为 `ViewConfig` 类型在 `query/types.ts` 中已有定义。
 
 ---
 
@@ -511,9 +523,9 @@ src/view/
 | 4 | 视图定义方式 | 声明式代码块 + 运行时配置 API，共享 Config 对象 | ✅ 已实现 |
 | 5 | 表格声明语法 | `from` / `show` / `sort by` / `where` / `limit` | ✅ 已实现 |
 | 6 | WHERE 条件 | 扁平 AND，逗号分隔，不支持嵌套 OR | ⚡ 实际支持 AND/OR/IN/IS NULL |
-| 7 | 渲染方式 | `MarkdownPostProcessor` 代码块替换为 DOM | ✅ 已实现 |
-| 8 | 编辑模式 | 行内编辑（单元格点击 → 输入框 → 失焦/Enter） | ⬜ 延期 |
-| 9 | 保存时机 | 即时自动保存（失焦/Enter → engine.update → 文件写穿） | ⬜ 延期 |
+| 7 | 渲染方式 | `MarkdownPostProcessor` 代码块替换为 React UI | ✅ React (createRoot) |
+| 8 | 编辑模式 | 行内编辑（单元格点击 → 输入框 → 失焦/Enter） | ✅ React 实现，类型感知 |
+| 9 | 保存时机 | 即时自动保存（失焦/Enter → engine.update → 文件写穿） | ✅ 已实现（force 模式） |
 | 10 | 列显示控制 | 列选择器下拉（多选） + 右键列头快捷隐藏 | ⬜ 延期 |
 | 11 | 表单场景 | 新增弹窗 / 编辑弹窗 / 独立 `mddb-form` 声明块 | ⚠️ 仅独立块已实现 |
 | 12 | 表单声明语法 | `to` / `fields` / `mode` / `layout` / `keep-open` | ✅ 已实现 |
@@ -524,29 +536,29 @@ src/view/
 | 17 | 提交行为 | 弹窗关闭（表格触发）；独立块默认关闭，`keep-open: true` 连续录入 | ⚠️ 独立块已实现 |
 | 18 | 配置写回 | 自动写回代码块（debounce 300ms） + 脏检测跳过 | ⬜ 延期 |
 | 19 | 客户端校验 | 全量：类型 + 必填 + 格式 + PK 唯一性 + ref 引用 | ⬜ 延期 |
-| 20 | 新增行入口 | 工具栏"+"按钮 → 表单弹窗 + 表格底部空白行快速录入 | ⬜ 延期 |
-| 21 | 删除/操作入口 | 行首操作按钮（⠿）→ 菜单：编辑/删除/向上插入/向下插入 | ⬜ 延期 |
+| 20 | 新增行入口 | 工具栏"+"按钮 → 表单弹窗 | ✅ 已实现（`+New Row` + FormModal） |
+| 21 | 删除/操作入口 | 行首操作按钮（⠿）→ 菜单：编辑/删除 | ✅ 已实现（React） |
 | 22 | 排序交互 | 多列排序（默认替换，Shift+点击添加），列头显示序号 | ⚠️ 仅单列排序已实现 |
-| 23 | 撤销机制 | 进待讨论清单（远期） | ⬜ 远期 |
-| 24 | 写回并发冲突 | 比对上次写回缓存，不一致 → 跳过写回，仅内存生效 | ⬜ 延期 |
-| 25 | 依赖注入 | 构造函数注入（`engine`, `events`, `config`） | ✅ 已实现 |
-| 26 | 插入行行为 | 向上/向下插入走行内空行，工具栏"+"走表单弹窗 | ⬜ 延期 |
-| 27 | 分页 | 滚动自动加载（无限滚动） + 虚拟滚动渲染 | ⚠️ 按钮分页已实现，非无限滚动 |
-| 28 | 表单布局 | 默认单列纵向，`layout: compact` 切换双列 | ⚠️ 仅 `normal` 已实现 |
-| 29 | 插入物理位置 | **引擎变更**：INSERT 改为指定行号插入 | ✅ 引擎侧已实现 |
-| 30 | 插入排序语义 | 物理位置 = 显示位置，排序由用户手动触发 | ✅ 引擎侧已支持 |
-| 31 | mode: view 多匹配 | 显示第一条 + 行切换器 | ⬜ 延期 |
-| 32 | 解析器位置 | 独立 Parser 模块，接受 string → Config | ✅ 已实现（表格）；⚠️ 表单在 main.ts 内联 |
-| 33 | View/ViewModel | 分离。ViewModel 管数据+状态，View 管 DOM+交互 | ✅ 已实现（表格） |
-| 34 | 文件结构 | 按职责分层：parser / base / table / form / shared / integration | ⚠️ `form/` 目录未创建 |
-| 35 | 集成入口 | `registerViewLayer(plugin, engine)` 单函数 | ✅ 已实现 |
+| 23 | 列宽调整 | 表头拖拽手柄调整列宽（参考 DataLoom） | ✅ 已实现（5px 拖拽区） |
+| 24 | 撤销机制 | 进待讨论清单（远期） | ⬜ 远期 |
+| 25 | 写回并发冲突 | 比对上次写回缓存，不一致 → 跳过写回，仅内存生效 | ⬜ 延期 |
+| 26 | 依赖注入 | 构造函数注入（`engine`, `events`, `config`） | ✅ 已实现 |
+| 27 | 插入行行为 | 向上/向下插入走行内空行，工具栏"+"走表单弹窗 | ⬜ 延期 |
+| 28 | 分页 | 虚拟滚动渲染（react-virtuoso） | ✅ react-virtuoso 已实现 |
+| 29 | 表单布局 | 默认单列纵向，`layout: compact` 切换双列 | ⚠️ 仅 `normal` 已实现 |
+| 30 | 插入物理位置 | **引擎变更**：INSERT 改为指定行号插入 | ✅ 引擎侧已实现 |
+| 31 | 插入排序语义 | 物理位置 = 显示位置，排序由用户手动触发 | ✅ 引擎侧已支持 |
+| 32 | mode: view 多匹配 | 显示第一条 + 行切换器 | ⬜ 延期 |
+| 33 | 解析器位置 | 独立 Parser 模块，接受 string → Config | ✅ 已实现（表格）；⚠️ 表单在 main.ts 内联 |
+| 34 | View/ViewModel | 分离。ViewModel 管数据+状态，View 管 DOM+交互 | ✅ 已实现（表格） |
+| 35 | 文件结构 | 按职责分层：parser / base / table / form / shared / integration | ⚠️ `form/` 目录未创建 |
+| 36 | 集成入口 | `registerViewLayer(plugin, engine)` 单函数 | ✅ 已实现 |
 
 ---
 
 ## 十三、待讨论清单
 
 - 撤销机制（Ctrl+Z undo 栈）
-- 列宽拖拽调整
 - 多文件表视图
 - 看板/日历/画廊/图表/图谱视图
 - DQL 终端用户查询语法

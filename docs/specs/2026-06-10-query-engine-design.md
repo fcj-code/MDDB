@@ -1,8 +1,9 @@
 # MD-DB 查询引擎设计文档 v1.0
 
 > 日期：2026-06-10
-> 状态：草案 — 查询引擎完整设计
+> 状态：**已实现** — 查询引擎完整实现（2026-06-13 更新）
 > 依赖：`2026-06-10-storage-engine-design.md`（存储引擎）、`2026-06-10-parse-pipeline-design.md`（解析管道）
+> 实现：`src/query/` — types.ts / validator.ts / sql-generator.ts / assembler.ts / engine.ts
 
 ---
 
@@ -516,10 +517,52 @@ stmt.bind([-5000, '餐饮']);
 
 ---
 
-## 十五、待设计（后续）
+## 十五、实现状态（2026-06-13 更新）
+
+### 15.1 实现清单
+
+| 模块 | 文件 | 状态 | 说明 |
+|------|------|:----:|------|
+| Type Definitions | `src/query/types.ts` | ✅ 完成 | 所有类型定义（Query / FilterGroup / AggregateClause / ResultSet / ...） |
+| QueryValidator | `src/query/validator.ts` | ✅ 完成 | 7 条验证规则：表存在、字段存在、操作符兼容、ref 检查、聚合分组配对 |
+| SQLGenerator | `src/query/sql-generator.ts` | ✅ 完成 | SELECT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT-OFFSET / 聚合 |
+| ResultAssembler | `src/query/assembler.ts` | ✅ 完成 | decimal 格式化、分页信息构建、ref 跟随展开（assembleWithRefs） |
+| QueryEngine | `src/query/engine.ts` | ✅ 完成 | Validator → Generator → Assembler 管道、COUNT(*) 分页计数、raw SQL |
+| 测试 | `src/query/*.test.ts` | ✅ 完成 | validator(13) + sql-generator(16) + assembler(6) + engine(5) = 40 tests |
+
+### 15.2 与设计的偏差
+
+| 设计项 | 设计文档 | 实际实现 | 说明 |
+|--------|---------|---------|------|
+| `SchemaRegistry` 接口 | 未明确定义 | 在 `validator.ts` 中定义 | 设计文档未指定接口位置，实现选择了就近放置 |
+| `SqlDatabase` 接口 | 未定义 | 在 `engine.ts` 中定义 | 抽离 sql.js 依赖，便于测试 mock |
+| 测试框架 | 未指定 | vitest | 与项目现有工具链一致 |
+| `SchemaRegistry` 访问方式 | 假设从 schema 模块导入 | `BindingStore.getSchema(table)` 包装 | 实际通过 binding-store 获取 Schema |
+
+### 15.3 集成点
+
+查询引擎通过以下接口与系统其他部分集成：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    QueryEngine                           │
+│                                                         │
+│  SchemaRegistry ←── BindingStore.getSchema(table)       │
+│  (validator.ts 中定义)                                    │
+│                                                         │
+│  SqlDatabase  ←── sql.js WASM SQLite 实例               │
+│  (engine.ts 中定义: exec / prepare)                      │
+│                                                         │
+│  SchemaGetter ←── SchemaRegistry.get(table)              │
+│  (sql-generator.ts 中定义)                                │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 15.4 待设计（后续）
 
 - [ ] DQL 用户语法：终端用户的 Markdown 查询代码块
 - [ ] 查询缓存：重复查询的结果缓存与失效策略
 - [ ] 查询性能监控：慢查询日志、执行计划可视化
 - [ ] 表达式/计算列：SelectClause 中的计算表达式
 - [ ] 全文搜索：text 字段的全文索引
+- [ ] Ref 跟随的延迟加载：目标表未加载时的自动重试机制

@@ -75,6 +75,11 @@ export class KanbanViewModel extends BaseViewModel {
     return this._searchQuery;
   }
 
+  /** 暴露引擎给 UI 层（FormBuilder / modal 使用） */
+  getEngine(): MDDBEngine {
+    return this.engine;
+  }
+
   // ============================================================
   // 生命周期
   // ============================================================
@@ -84,10 +89,10 @@ export class KanbanViewModel extends BaseViewModel {
     try {
       const result = this.engine.query(this.buildQuery());
       if (!result.ok) {
-        this.setState({ status: 'error', error: result.err.message });
+        this.setState({ status: 'error', error: result.error.message });
         return;
       }
-      this.updateFromResult(result.val);
+      this.updateFromResult(result.value);
       this.setState({ status: 'ready' });
     } catch (e) {
       this.setState({
@@ -168,6 +173,17 @@ export class KanbanViewModel extends BaseViewModel {
   ): Promise<boolean> {
     try {
       await this.engine.update(cardId, { [field]: value }, { force: true });
+      await this.refresh();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 批量更新卡片字段（FormBuilder 提交用） */
+  async updateRecord(storagePk: string, values: Record<string, unknown>): Promise<boolean> {
+    try {
+      await this.engine.update(storagePk, values, { force: true });
       await this.refresh();
       return true;
     } catch {

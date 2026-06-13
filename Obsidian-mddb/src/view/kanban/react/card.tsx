@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useRef, useCallback } from 'react';
 import type { Card as CardData } from '../kanban-view-model';
 import { CardTitle } from './card-title';
 import { CardMetadata } from './card-metadata';
@@ -20,7 +20,6 @@ export function Card({
   onUpdateField,
   onDragStart,
 }: CardProps) {
-  const [isEditing, setIsEditing] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
@@ -32,13 +31,37 @@ export function Card({
     onDragStart(card.id, e);
   }, [card.id, onDragStart]);
 
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onEdit(card.id);
+  }, [card.id, onEdit]);
+
+  const handleMenuClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    const Menu = (window as any).Menu;
+    const menu = Menu ? new Menu() : null;
+    if (menu) {
+      menu.addItem((item: any) => item
+        .setTitle('Edit')
+        .setIcon('pencil')
+        .onClick(() => onEdit(card.id))
+      );
+      menu.addItem((item: any) => item
+        .setTitle('Delete')
+        .setIcon('trash')
+        .onClick(() => onDelete(card.id))
+      );
+      menu.showAtMouseEvent(e);
+    }
+  }, [card.id, onEdit, onDelete]);
+
   return (
     <div
       className="mddb-kanban-item-wrapper"
       draggable
       onDragStart={handleDragStart}
     >
-      <div ref={cardRef} className="mddb-kanban-item">
+      <div ref={cardRef} className="mddb-kanban-item" onDoubleClick={handleDoubleClick}>
         <div className="mddb-kanban-item-content-wrapper">
           <div className="mddb-kanban-item-title-wrapper">
             <input
@@ -49,42 +72,11 @@ export function Card({
             />
             <CardTitle
               title={card.title}
-              isEditing={isEditing}
-              onStartEdit={() => setIsEditing(true)}
-              onCommit={(val) => {
-                setIsEditing(false);
-                if (val !== card.title) {
-                  const titleField = Object.keys(card.raw).find(k =>
-                    card.raw[k] === card.title && k !== 'storage_pk'
-                  );
-                  if (titleField) {
-                    onUpdateField(card.id, titleField, val);
-                  }
-                }
-              }}
-              onCancel={() => setIsEditing(false)}
               searchQuery={searchQuery}
             />
             <a
               className="mddb-kanban-item-menu-button clickable-icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                const Menu = (window as any).Menu;
-                const menu = Menu ? new Menu() : null;
-                if (menu) {
-                  menu.addItem((item: any) => item
-                    .setTitle('Edit')
-                    .setIcon('pencil')
-                    .onClick(() => onEdit(card.id))
-                  );
-                  menu.addItem((item: any) => item
-                    .setTitle('Delete')
-                    .setIcon('trash')
-                    .onClick(() => onDelete(card.id))
-                  );
-                  menu.showAtMouseEvent(e);
-                }
-              }}
+              onClick={handleMenuClick}
             >
               ⋮
             </a>

@@ -17,7 +17,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '1', 标题: 'Task A', 状态: '待处理', 负责人: '张三' },
           { storage_pk: '2', 标题: 'Task B', 状态: '进行中', 负责人: '李四' },
@@ -48,7 +48,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '1', 标题: 'Task A', 状态: '待处理' },
           { storage_pk: '2', 标题: 'Task B', 状态: '进行中' },
@@ -70,7 +70,7 @@ describe('KanbanViewModel', () => {
     // Mock query again for refresh after move
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '1', 标题: 'Task A', 状态: '进行中' },
           { storage_pk: '2', 标题: 'Task B', 状态: '进行中' },
@@ -89,7 +89,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [],
         columns: [{ name: 'storage_pk', type: 'string' }, { name: '标题', type: 'string' }],
         total: 0,
@@ -108,7 +108,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '1', 标题: 'Task A', 状态: '待处理' },
         ],
@@ -125,7 +125,7 @@ describe('KanbanViewModel', () => {
     // Mock refresh data
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '1', 标题: 'Task A', 状态: '待处理' },
           { storage_pk: 'new-1', 标题: 'New Task', 状态: '待处理' },
@@ -144,7 +144,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '1', 标题: 'Task A', 状态: '待处理' },
           { storage_pk: '2', 标题: 'Task B', 状态: '进行中' },
@@ -161,7 +161,7 @@ describe('KanbanViewModel', () => {
 
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '2', 标题: 'Task B', 状态: '进行中' },
         ],
@@ -179,7 +179,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [
           { storage_pk: '1', 标题: 'Task A', 状态: '待处理' },
         ],
@@ -206,7 +206,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: true,
-      val: {
+      value: {
         rows: [],
         columns: [],
         total: 0,
@@ -226,7 +226,7 @@ describe('KanbanViewModel', () => {
     const engine = createMockEngine();
     engine.query.mockReturnValue({
       ok: false,
-      err: new Error('Query failed'),
+      error: new Error('Query failed'),
     });
 
     const config: KanbanConfig = { table: 'tasks', columns: ['标题'], groupBy: '状态' };

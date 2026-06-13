@@ -10,9 +10,11 @@ interface LaneProps {
   viewModel: KanbanViewModel;
   searchQuery?: string;
   onDragStart: (cardId: string, e: React.DragEvent) => void;
+  onEditCard: (cardId: string) => void;
+  onAddCard: (laneId: string) => void;
 }
 
-export function Lane({ lane, viewModel, searchQuery, onDragStart }: LaneProps) {
+export function Lane({ lane, viewModel, searchQuery, onDragStart, onEditCard, onAddCard }: LaneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const laneRef = useRef<HTMLDivElement>(null);
 
@@ -71,18 +73,13 @@ export function Lane({ lane, viewModel, searchQuery, onDragStart }: LaneProps) {
                   card={card}
                   searchQuery={searchQuery}
                   onDelete={(id) => viewModel.deleteCard(id)}
-                  onEdit={(id) => viewModel.updateCardField(id, '', '')}
+                  onEdit={onEditCard}
                   onUpdateField={(id, field, value) => viewModel.updateCardField(id, field, value)}
                   onDragStart={(id, e) => onDragStart(id, e)}
                 />
               ))}
             </div>
-            <CardForm
-              onAdd={(title) => {
-                const firstField = viewModel.config.columns[0] || 'title';
-                viewModel.addCard(lane.id, { [firstField]: title });
-              }}
-            />
+            <CardForm onOpenForm={() => onAddCard(lane.id)} />
           </>
         )}
       </div>

@@ -14,6 +14,18 @@ import { ViewConfigBuilder } from '../parser';
 import type { MDDBEngine } from '../../engine/engine';
 import { columnsToConfig, type TableConfig } from './table-config';
 
+// ============================================================
+// React 适配器快照类型
+// ============================================================
+
+export interface TableSnapshot {
+  columns: ViewColumn[];
+  rows: ViewRow[];
+  totalRows: number;
+  sortField?: string;
+  sortDirection?: 'ASC' | 'DESC';
+}
+
 export class TableViewModel extends BaseViewModel {
   private dataLayer: DataLayer;
   private _config: TableConfig;
@@ -90,6 +102,22 @@ export class TableViewModel extends BaseViewModel {
   /** 总页数 */
   get totalPages(): number {
     return this.tableState.totalPages;
+  }
+
+  // ============================================================
+  // React 适配器
+  // ============================================================
+
+  /** 获取当前数据快照（React 组件使用） */
+  getSnapshot(): TableSnapshot {
+    const s = this.tableState;
+    return {
+      columns: s.columns,
+      rows: s.rows,
+      totalRows: s.totalRows,
+      sortField: s.sortField,
+      sortDirection: s.sortDirection,
+    };
   }
 
   // ============================================================
@@ -185,11 +213,16 @@ export class TableViewModel extends BaseViewModel {
   }
 
   private updateFromResult(result: ResultSet): void {
-    const columns: ViewColumn[] = result.columns.map(col => ({
-      name: col.name,
-      type: col.type,
-      label: col.name,
-    }));
+    const columns: ViewColumn[] = result.columns.map(col => {
+      // Preserve existing column widths
+      const existing = this.tableState.columns.find(c => c.name === col.name);
+      return {
+        name: col.name,
+        type: col.type,
+        label: col.name,
+        width: existing?.width ?? col.width,
+      };
+    });
 
     const rows: ViewRow[] = result.rows.map(row => ({
       cells: { ...row },
@@ -222,6 +255,27 @@ export class TableViewModel extends BaseViewModel {
   }
 
   // ============================================================
+  // 列宽
+  // ============================================================
+
+  setColumnWidth(colName: string, width: number): void {
+    const col = this.tableState.columns.find(c => c.name === colName);
+    if (col) {
+      col.width = width;
+      this.events.emit({ type: 'state-changed', viewId: this.viewId });
+    }
+  }
+
+  /** 重置列宽为 auto */
+  resetColumnWidth(colName: string): void {
+    const col = this.tableState.columns.find(c => c.name === colName);
+    if (col) {
+      delete col.width;
+      this.events.emit({ type: 'state-changed', viewId: this.viewId });
+    }
+  }
+
+  // ============================================================
   // 编辑
   // ============================================================
 
@@ -246,7 +300,7 @@ export class TableViewModel extends BaseViewModel {
       const storagePk = row.cells['storage_pk'] as string;
       if (!storagePk) throw new Error('No storage_pk for this row');
 
-      await this.engine.update(storagePk, { [col]: newValue });
+      await this.engine.update(storagePk, { [col]: newValue }, { force: true });
       this.editingCell = null;
       this.events.emit({ type: 'edit-commit', viewId: this.viewId, data: { rowIndex, col, value: newValue } });
       await this.refresh();
@@ -315,7 +369,7 @@ export class TableViewModel extends BaseViewModel {
 
   async deleteRow(storagePk: string): Promise<boolean> {
     try {
-      await this.engine.delete(storagePk);
+      await this.engine.delete(storagePk, { force: true });
       this.closeActionMenu();
       this.events.emit({ type: 'row-deleted', viewId: this.viewId, data: { storagePk } });
       await this.refresh();

@@ -201,6 +201,8 @@ export interface TableSource {
 export interface WriteOptions {
   /** 乐观 UI 模式（先更新 UI，后台写文件） */
   optimistic?: boolean;
+  /** 跳过 hash 冲突检测（用户主动编辑时使用） */
+  force?: boolean;
 }
 
 export interface WriteResult {

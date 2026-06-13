@@ -22,6 +22,7 @@ import type {
   SyncState,
   RecordInput,
   RecordPatch,
+  WriteOptions,
 } from '../core/types';
 import type {
   FileOperator,
@@ -298,6 +299,7 @@ export class CRUDExecutor {
   async update(
     storagePk: string,
     patch: RecordPatch,
+    options?: WriteOptions,
   ): Promise<WriteResult> {
     // 1. Binding
     const binding = this.binding.findByStoragePk(storagePk);
@@ -321,15 +323,22 @@ export class CRUDExecutor {
         throw new WriteError(`Failed to read file "${filePath}": ${e}`, tableName, filePath);
       }
 
-      // 3. Hash 校验
-      assertLineHash(content, binding.lineNumber, binding.rowHash, filePath, tableName);
+      // 3. Hash 校验（除非 force）
+      let actualLineNumber = binding.lineNumber;
+      if (!options?.force) {
+        assertLineHash(content, binding.lineNumber, binding.rowHash, filePath, tableName);
+      } else {
+        // force 模式下重新搜索 storage_pk 定位行
+        const found = findLineByPkInContent(content, storagePk);
+        if (found > 0) actualLineNumber = found;
+      }
 
       // 4. 读取旧行 → 应用 patch
-      const oldLine = content.split('\n')[binding.lineNumber - 1]!;
+      const oldLine = content.split('\n')[actualLineNumber - 1]!;
       const newLine = this.applyPatchToLine(oldLine, patch, schema);
 
       // 5. 替换
-      const newContent = replaceLine(content, binding.lineNumber, newLine);
+      const newContent = replaceLine(content, actualLineNumber, newLine);
 
       // 6. 写文件
       try {
@@ -359,7 +368,7 @@ export class CRUDExecutor {
       }
 
       // 8. 更新 binding
-      this.binding.updatePosition(storagePk, binding.lineNumber, newRowHash);
+      this.binding.updatePosition(storagePk, actualLineNumber, newRowHash);
 
       // 9. 更新 file hash
       this.fileHash.setHash(filePath, simpleHash(newContent));
@@ -367,7 +376,7 @@ export class CRUDExecutor {
       return {
         success: true,
         storagePk,
-        lineNumber: binding.lineNumber,
+        lineNumber: actualLineNumber,
         syncState: 'synced',
         filePath,
         tableName,
@@ -392,6 +401,7 @@ export class CRUDExecutor {
    */
   async delete(
     storagePk: string,
+    options?: WriteOptions,
   ): Promise<WriteResult> {
     const binding = this.binding.findByStoragePk(storagePk);
     if (!binding) {
@@ -410,11 +420,17 @@ export class CRUDExecutor {
         throw new WriteError(`Failed to read file "${filePath}": ${e}`, tableName, filePath);
       }
 
-      // Hash 校验
-      assertLineHash(content, binding.lineNumber, binding.rowHash, filePath, tableName);
+      // Hash 校验（除非 force）
+      let actualLineNumber = binding.lineNumber;
+      if (!options?.force) {
+        assertLineHash(content, binding.lineNumber, binding.rowHash, filePath, tableName);
+      } else {
+        const found = findLineByPkInContent(content, storagePk);
+        if (found > 0) actualLineNumber = found;
+      }
 
       // 删除行
-      const newContent = deleteLine(content, binding.lineNumber);
+      const newContent = deleteLine(content, actualLineNumber);
 
       // 写文件
       try {
@@ -436,7 +452,7 @@ export class CRUDExecutor {
       this.binding.deleteByStoragePk(storagePk);
 
       // 后续行 lineNumber - 1
-      this.binding.shiftLineNumbers(filePath, binding.lineNumber, -1);
+      this.binding.shiftLineNumbers(filePath, actualLineNumber, -1);
 
       // 更新 file hash
       this.fileHash.setHash(filePath, simpleHash(newContent));
@@ -690,4 +706,18 @@ function computeLogicalPk(values: unknown[], schema: SchemaSummary): string {
 function extractPrecision(typeExpr: string): number {
   const match = typeExpr.match(/\((\d+)\)/);
   return match ? parseInt(match[1]!, 10) : 2;
+}
+
+/**
+ * 在文件内容中按行搜索 storage_pk
+ * 用于 force 模式下重新定位行号
+ */
+function findLineByPkInContent(content: string, storagePk: string): number {
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.includes(storagePk)) {
+      return i + 1; // 1-based line number
+    }
+  }
+  return -1;
 }
