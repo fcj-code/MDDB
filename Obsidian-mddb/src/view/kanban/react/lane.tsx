@@ -12,9 +12,11 @@ interface LaneProps {
   onDragStart: (cardId: string, e: React.DragEvent) => void;
   onEditCard: (cardId: string) => void;
   onAddCard: (laneId: string) => void;
+  onLaneDragStart?: (laneId: string, e: React.DragEvent) => void;
+  onLaneDrop?: (laneId: string, draggedLaneId: string) => void;
 }
 
-export function Lane({ lane, viewModel, searchQuery, onDragStart, onEditCard, onAddCard }: LaneProps) {
+export function Lane({ lane, viewModel, searchQuery, onDragStart, onEditCard, onAddCard, onLaneDragStart, onLaneDrop }: LaneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const laneRef = useRef<HTMLDivElement>(null);
 
@@ -35,9 +37,17 @@ export function Lane({ lane, viewModel, searchQuery, onDragStart, onEditCard, on
       const data = JSON.parse(e.dataTransfer.getData('text/plain'));
       if (data.cardId) {
         viewModel.moveCard(data.cardId, data.fromLane, lane.id, 0);
+      } else if (data.laneId && onLaneDrop) {
+        onLaneDrop(lane.id, data.laneId);
       }
     } catch { /* ignore parse errors */ }
-  }, [viewModel, lane.id]);
+  }, [viewModel, lane.id, onLaneDrop]);
+
+  const handleLaneDragStart = useCallback((e: React.DragEvent) => {
+    e.dataTransfer.setData('text/plain', JSON.stringify({ laneId: lane.id }));
+    e.dataTransfer.effectAllowed = 'move';
+    onLaneDragStart?.(lane.id, e);
+  }, [lane.id, onLaneDragStart]);
 
   const filteredCards = searchQuery
     ? lane.cards.filter(c =>
@@ -62,6 +72,7 @@ export function Lane({ lane, viewModel, searchQuery, onDragStart, onEditCard, on
           lane={lane}
           onToggleCollapse={() => viewModel.toggleLaneCollapse(lane.id)}
           onMenuOpen={() => {}}
+          onDragStart={handleLaneDragStart}
         />
 
         {!lane.collapsed && (

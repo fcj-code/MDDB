@@ -67,6 +67,7 @@ export function Board({
             onDragStart={onDragStart}
             onEditCard={handleEditCard}
             onAddCard={setAddCardLaneId}
+            onLaneDrop={(targetId, draggedId) => viewModel.moveLane(draggedId, targetId)}
           />
         ))}
       </div>

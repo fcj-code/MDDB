@@ -49,6 +49,8 @@ export interface Card {
 export class KanbanViewModel extends BaseViewModel {
   private _board: KanbanBoard;
   private _searchQuery = '';
+  /** 用户拖拽后自定义的列顺序（laneId[]），refresh 时保持此顺序 */
+  private _laneOrder: string[] = [];
 
   constructor(
     viewId: string,
@@ -208,6 +210,26 @@ export class KanbanViewModel extends BaseViewModel {
     this.events.emit({ type: 'state-changed', viewId: this.viewId, data: { search: query } });
   }
 
+  /** 拖拽列重新排序 */
+  moveLane(laneId: string, targetLaneId: string): void {
+    const idx = this._board.lanes.findIndex(l => l.id === laneId);
+    const targetIdx = this._board.lanes.findIndex(l => l.id === targetLaneId);
+    if (idx === -1 || targetIdx === -1) return;
+
+    const lane = this._board.lanes.splice(idx, 1)[0]!;
+    this._board.lanes.splice(targetIdx, 0, lane);
+
+    // 记录自定义顺序
+    this._laneOrder = this._board.lanes.map(l => l.id);
+    this.events.emit({ type: 'state-changed', viewId: this.viewId, data: { laneOrder: this._laneOrder } });
+  }
+
+  /** 重置列顺序为默认（按分组字段排序） */
+  resetLaneOrder(): void {
+    this._laneOrder = [];
+    this.events.emit({ type: 'state-changed', viewId: this.viewId, data: { laneOrder: null } });
+  }
+
   // ============================================================
   // 内部
   // ============================================================
@@ -290,5 +312,14 @@ export class KanbanViewModel extends BaseViewModel {
       groupField,
       totalCards: result.total,
     };
+
+    // 应用用户自定义列顺序
+    if (this._laneOrder.length > 0) {
+      const ordered = this._laneOrder
+        .map(id => this._board.lanes.find(l => l.id === id))
+        .filter((l): l is Lane => l !== undefined);
+      const remaining = this._board.lanes.filter(l => !this._laneOrder.includes(l.id));
+      this._board.lanes = [...ordered, ...remaining];
+    }
   }
 }

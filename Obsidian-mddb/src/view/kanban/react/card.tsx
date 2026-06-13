@@ -51,7 +51,7 @@ export function Card({
         .setIcon('trash')
         .onClick(() => onDelete(card.id))
       );
-      menu.showAtMouseEvent(e);
+      menu.showAtMouseEvent(e.nativeEvent);
     }
   }, [card.id, onEdit, onDelete]);
 

@@ -6,6 +6,7 @@ interface LaneHeaderProps {
   onToggleCollapse: () => void;
   onTitleChange?: (title: string) => void;
   onMenuOpen: (e: React.MouseEvent) => void;
+  onDragStart?: (e: React.DragEvent) => void;
 }
 
 export function LaneHeader({
@@ -13,6 +14,7 @@ export function LaneHeader({
   onToggleCollapse,
   onTitleChange,
   onMenuOpen,
+  onDragStart,
 }: LaneHeaderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(lane.title);
@@ -30,7 +32,7 @@ export function LaneHeader({
 
   return (
     <div className="mddb-kanban-lane-header-wrapper">
-      <div className="mddb-kanban-lane-grip">
+      <div className="mddb-kanban-lane-grip" draggable={!!onDragStart} onDragStart={onDragStart}>
         ⠿
       </div>
       <div
