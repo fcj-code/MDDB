@@ -1,4 +1,5 @@
 import React, { useRef, useCallback } from 'react';
+import { Menu } from 'obsidian';
 import type { Card as CardData } from '../kanban-view-model';
 import { CardTitle } from './card-title';
 import { CardMetadata } from './card-metadata';
@@ -38,21 +39,18 @@ export function Card({
 
   const handleMenuClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    const Menu = (window as any).Menu;
-    const menu = Menu ? new Menu() : null;
-    if (menu) {
-      menu.addItem((item: any) => item
-        .setTitle('Edit')
-        .setIcon('pencil')
-        .onClick(() => onEdit(card.id))
-      );
-      menu.addItem((item: any) => item
-        .setTitle('Delete')
-        .setIcon('trash')
-        .onClick(() => onDelete(card.id))
-      );
-      menu.showAtMouseEvent(e.nativeEvent);
-    }
+    const menu = new Menu();
+    menu.addItem((item) => item
+      .setTitle('Edit')
+      .setIcon('pencil')
+      .onClick(() => onEdit(card.id))
+    );
+    menu.addItem((item) => item
+      .setTitle('Delete')
+      .setIcon('trash')
+      .onClick(() => onDelete(card.id))
+    );
+    menu.showAtMouseEvent(e.nativeEvent);
   }, [card.id, onEdit, onDelete]);
 
   return (
