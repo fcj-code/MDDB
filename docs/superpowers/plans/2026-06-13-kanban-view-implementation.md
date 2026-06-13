@@ -1,6 +1,8 @@
 # Kanban View Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Status: ✅ ALL TASKS COMPLETE**（最后更新: 2026-06-13，包含后续交互优化）
 
 **Goal:** Implement a Kanban board view for MDDB that groups query results by a specified field, renders cards in columns, supports drag-to-update, inline editing, search, and column management.
 
@@ -17,24 +19,24 @@
 ```
 src/view/kanban/
 ├── kanban-config.ts       # KanbanConfig interface + types
-├── kanban-view-model.ts   # KanbanViewModel (grouping/moveCard/CRUD/search)
+├── kanban-view-model.ts   # KanbanViewModel (grouping/moveCard/CRUD/search/laneOrder)
 ├── kanban-view.tsx        # Obsidian ItemView
 ├── inline-renderer.tsx    # Inline code block renderer (createRoot)
 ├── parser.ts              # parseKanbanBlock()
 └── react/
     ├── index.tsx          # KanbanApp entry (event subscribe + state sync)
-    ├── board.tsx          # Board container (horizontal scroll + search bar)
-    ├── lane.tsx           # Lane component (Droppable + collapse)
-    ├── lane-header.tsx    # LaneHeader (title/count/collapse/menu)
-    ├── lane-menu.tsx      # LaneMenu (sort/archive/WIP/delete)
+    ├── board.tsx          # Board container (search + horizontal scroll + modal state)
+    ├── lane.tsx           # Lane component (Droppable + collapse + lane drag)
+    ├── lane-header.tsx    # LaneHeader (title/count/collapse/menu/grip drag handle)
+    ├── lane-menu.tsx      # LaneMenu (archive/WIP/delete)
     ├── lane-form.tsx      # LaneForm (add lane when board empty)
-    ├── card.tsx           # Card component (Draggable)
-    ├── card-title.tsx     # CardTitle (first field as title, editable on double-click)
-    ├── card-metadata.tsx  # CardMetadata (remaining fields)
-    ├── card-form.tsx      # CardForm (add card input at lane bottom)
-    ├── card-menu.tsx      # CardMenu (right-click: edit/delete)
+    ├── edit-modal.tsx     # EditModal (FormBuilder-based edit/new modal)
+    ├── card.tsx           # Card component (Draggable + double-click edit + menu)
+    ├── card-title.tsx     # CardTitle (title display + search highlight)
+    ├── card-metadata.tsx  # CardMetadata (field display + search highlight)
+    ├── card-form.tsx      # CardForm ("+ Add a card" button → opens modal)
     ├── search-bar.tsx     # SearchBar
-    └── styles.css         # Kanban styles (obsidian-kanban replica)
+    └── styles.css         # Kanban styles + modal styles
 ```
 
 **Modified files:**
@@ -2095,23 +2097,48 @@ git commit -m "feat: add LaneMenu and LaneForm components"
 ## Self-Review
 
 **1. Spec coverage:**
-- §2 声明语法 → Task 1 (Parser)
-- §3 数据模型 → Task 2 (ViewModel KanbanBoard/Lane/Card types)
-- §4 KanbanViewModel → Task 2
-- §5 React 组件树 → Task 3
-- §6.1 拖拽系统 → Task 3 (Card/Lane onDragStart/onDrop)
-- §6.2 卡片交互 → Task 3 (CardTitle double-click, checkbox, menu)
-- §6.3 列操作 → Task 5 (LaneMenu: archive/delete/WIP)
-- §6.4 搜索过滤 → Task 3 (SearchBar + CardMetadata filter)
-- §6.5 空状态 → Task 3 (Board empty state)
-- §7 注册与渲染 → Task 4 (InlineRenderer + ItemView + main.ts + integration)
-- §8 文件结构 → All tasks match exactly
+- §2 声明语法 → Task 1 (Parser) ✅
+- §3 数据模型 → Task 2 (ViewModel KanbanBoard/Lane/Card types) ✅
+- §4 KanbanViewModel → Task 2 ✅
+- §5 React 组件树 → Task 3 ✅
+- §6.1 拖拽系统 → Task 3 (Card/Lane onDragStart/onDrop) ✅
+- §6.2 卡片交互 → Task 3 + 优化 (Card double-click modal, menu Edit/Delete) ✅
+- §6.3 列操作 → Task 5 (LaneMenu: archive/delete/WIP) + 列拖拽排序 ✅
+- §6.4 搜索过滤 → Task 3 (SearchBar + CardMetadata filter) ✅
+- §6.5 空状态 → Task 3 (Board empty state) ✅
+- §7 注册与渲染 → Task 4 (InlineRenderer + ItemView + main.ts + integration) ✅
+- §8 文件结构 → All tasks match exactly ✅
+- §9 决策记录 → 14 items match implementation ✅
 
 **2. Placeholder scan:** No TBD, TODO, or "implement later" in code blocks. All component code is complete and functional.
 
 **3. Type consistency:** KanbanConfig from Task 1 matches ViewModel constructor in Task 2. KanbanBoard/Lane/Card types consistent across all React components.
 
 **4. Gaps identified:**
-- LaneMenu uses inline div-based menu (Obsidian Menu API is available but more complex)
-- Drag overlay (semi-transparent card) uses CSS class `.mddb-kanban-drag-overlay` in styles but HTML5 DnD `setDragImage` is the standard approach
-- Lane column drag reordering is spec'd as "future" — not implemented
+- ~~LaneMenu uses inline div-based menu~~ — kept as is for simplicity (Obsidian Menu API used for card menu only)
+- ~~Drag overlay uses CSS class~~ — HTML5 DnD `setDragImage` not used; cards use CSS opacity instead
+- ~~Lane column drag reordering is spec'd as "future"~~ — ✅ IMPLEMENTED via grip handle + moveLane()
+
+## Post-Implementation Optimizations (2026-06-13)
+
+After initial Kanban implementation, the following interaction optimizations were applied:
+
+### Optimization 1: Edit modal instead of inline editing
+- **Before**: Double-click card title → inline input field
+- **After**: Double-click card → `EditModal` with `FormBuilder.render()` (all fields editable)
+- **Changed files**: `card-title.tsx` (simplified), `card.tsx` (double-click handler), new `edit-modal.tsx`
+
+### Optimization 2: "+ Add a card" opens form modal
+- **Before**: Click → inline input → type title → Enter to save
+- **After**: Click → `EditModal` with blank form (all fields fillable)
+- **Changed files**: `card-form.tsx` (simplified to trigger button), `board.tsx` (modal state)
+
+### Optimization 3: Card menu uses proper Menu import
+- **Before**: `(window as any).Menu` — undefined at runtime
+- **After**: `import { Menu } from 'obsidian'` — works correctly
+- **Changed files**: `card.tsx`
+
+### Optimization 4: Lane drag-to-reorder
+- **Before**: No lane reorder support
+- **After**: Drag lane grip (⠿) to reorder columns; custom order persists across refreshes
+- **Changed files**: `kanban-view-model.ts` (moveLane, _laneOrder), `lane-header.tsx` (grip draggable), `lane.tsx` (lane drop), `board.tsx` (onLaneDrop)

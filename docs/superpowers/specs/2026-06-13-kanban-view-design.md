@@ -1,10 +1,10 @@
 # MD-DB 看板视图设计文档 v1.0
 
 > 日期：2026-06-13
-> 状态：设计稿（待实现）
+> 状态：✅ 已实现（最新更新：2026-06-13）
 > 参考实现：obsidian-kanban（https://github.com/obsidian-community/obsidian-kanban）— UI/UX 完全复刻
 > 依赖：`2026-06-10-view-layer-design.md`（视图层架构模式复用）
-> 决策数：12 项
+> 决策数：14 项
 
 ---
 
@@ -33,17 +33,16 @@
 - **数据分组**：按 `group by` 字段值自动生成列
 - **看板渲染**：Board → Lane → Card 三层 React 组件
 - **拖拽更新**：卡片跨列拖拽 → `engine.update()` 写数据库
-- **行内编辑**：双击卡片进入编辑（复用 FormModal）
-- **快速添加**：列底部输入框添加新卡片
+- **编辑弹窗**：双击卡片或菜单按钮 → 弹出 FormModal（复用 FormBuilder）
+- **新增表单**：点击 "+ Add a card" → 弹出空白 FormModal
 - **搜索过滤**：看板级搜索，实时匹配卡片标题和元数据
 - **列操作**：折叠/展开/WIP 限制/删除/归档
+- **列拖拽排序**：通过列头拖拽手柄（⠿）拖拽列重新排序
 - **两种打开方式**：Inline 代码块 + ItemView 独立面板
 - **完全复刻 UI**：obsidian-kanban 的视觉风格和交互模式
 
 **本次不覆盖（后续迭代）：**
 
-- 列间拖拽排序
-- 自定义列顺序（目前按字段值排序）
 - 卡片富文本编辑器
 - 跨看板拖拽
 
@@ -166,23 +165,25 @@ class KanbanViewModel extends BaseViewModel {
 
   // ── 数据访问 ──
   get board(): KanbanBoard
-  getLane(laneId: string): Lane | undefined
+  get config(): KanbanConfig
+  getEngine(): MDDBEngine              // 暴露引擎给 UI 层（FormModal 使用）
 
   // ── 拖拽更新（核心） ──
   async moveCard(cardId: string, fromLane: string, toLane: string, toIndex: number): Promise<boolean>
+
+  // ── 列拖拽排序 ──
+  moveLane(laneId: string, targetLaneId: string): void
+  resetLaneOrder(): void
 
   // ── CRUD ──
   async addCard(laneId: string, values: Record<string, unknown>): Promise<boolean>
   async deleteCard(cardId: string): Promise<boolean>
   async updateCardField(cardId: string, field: string, value: unknown): Promise<boolean>
+  async updateRecord(storagePk: string, values: Record<string, unknown>): Promise<boolean>
 
   // ── 交互 ──
   toggleLaneCollapse(laneId: string): void
-  search(query: string): void
-
-  // ── 内部 ──
-  private groupByField(rows: Record<string, unknown>[]): Lane[]
-  private buildCard(row: Record<string, unknown>): Card
+  setSearchQuery(query: string): void
 }
 ```
 
@@ -263,8 +264,8 @@ class KanbanViewModel extends BaseViewModel {
 | 交互 | 行为 |
 |------|------|
 | 单击 checkbox | toggle 完成状态 |
-| 双击卡片 | 弹出 FormModal 编辑表单（复用现有组件） |
-| 右键卡片 | 菜单：编辑 / 删除 |
+| 双击卡片 | 弹出 FormModal 编辑弹窗（复用 FormBuilder，预填所有字段值） |
+| 菜单按钮 ⋮ | 弹出 Obsidian Menu：编辑 / 删除 |
 | 拖拽卡片 | 见 6.1 |
 
 ### 6.3 列操作
@@ -276,6 +277,7 @@ class KanbanViewModel extends BaseViewModel {
 | 归档所有 | 列内所有卡片移至归档区（`engine.update` 标记为归档） |
 | 归档已完成 | 仅归档 checked=true 的卡片 |
 | 删除列 | 确认对话框 → 删除列内所有卡片 → 刷新 |
+| 列拖拽排序 | 通过列头拖拽手柄（⠿）拖拽列到目标位置，顺序在 refresh 后保持 |
 
 ### 6.4 搜索过滤
 
@@ -344,24 +346,24 @@ export class KanbanView extends ItemView {
 ```
 src/view/kanban/
 ├── kanban-config.ts       # KanbanConfig 接口 + 类型
-├── kanban-view-model.ts   # KanbanViewModel（分组/拖拽/搜索/CRUD）
+├── kanban-view-model.ts   # KanbanViewModel（分组/拖拽/搜索/CRUD/列排序）
 ├── kanban-view.tsx        # Obsidian ItemView
 ├── inline-renderer.tsx    # 代码块内联渲染器（createRoot）
 ├── parser.ts              # mddb-kanban 代码块解析（parseKanbanBlock）
 └── react/
     ├── index.tsx          # KanbanApp 入口（事件订阅 + state）
-    ├── board.tsx          # Board 容器（搜索 + 横向滚动 + Droppable）
-    ├── lane.tsx           # Lane 列组件（Droppable + 折叠）
-    ├── lane-header.tsx    # LaneHeader（标题/计数/折叠/菜单）
+    ├── board.tsx          # Board 容器（搜索 + 横向滚动 + modal 状态管理）
+    ├── lane.tsx           # Lane 列组件（Droppable + 折叠 + 列拖拽）
+    ├── lane-header.tsx    # LaneHeader（标题/计数/折叠/菜单/拖拽手柄）
     ├── lane-menu.tsx      # LaneMenu（排序/归档/WIP/删除）
     ├── lane-form.tsx      # LaneForm（空看板时新增列）
-    ├── card.tsx           # Card 卡片组件（Draggable）
-    ├── card-title.tsx     # CardTitle（标题字段 Markdown 渲染）
-    ├── card-metadata.tsx  # CardMetadata（元数据行）
-    ├── card-form.tsx      # CardForm（底部添加卡片输入框）
-    ├── card-menu.tsx      # CardMenu（右键菜单）
+    ├── edit-modal.tsx     # EditModal（复用 FormBuilder 的编辑/新增弹窗）
+    ├── card.tsx           # Card 卡片组件（Draggable + 双击编辑 + 菜单）
+    ├── card-title.tsx     # CardTitle（标题字段渲染 + 搜索高亮）
+    ├── card-metadata.tsx  # CardMetadata（元数据行 + 搜索高亮）
+    ├── card-form.tsx      # CardForm（"添加卡片"按钮 → 弹出 modal）
     ├── search-bar.tsx     # SearchBar
-    └── styles.css         # 看板样式（复刻 obsidian-kanban）
+    └── styles.css         # 看板样式（复刻 obsidian-kanban + modal 样式）
 ```
 
 ---
@@ -372,7 +374,7 @@ src/view/kanban/
 |---|--------|------|
 | 1 | 声明语法 | `group by` 自动分列，复用现有指令解析模式 |
 | 2 | 列生成 | group by 字段的去重值自动生成列，无需预定义 |
-| 3 | 列顺序 | 按字段值的自然顺序排序 |
+| 3 | 列顺序 | 按字段值的自然顺序排序，支持用户通过拖拽自定义顺序 |
 | 4 | 卡片字段映射 | show 第一个字段 = 卡片标题，其余 = 元数据 |
 | 5 | 卡片 ID | 使用 storage_pk 作为唯一标识 |
 | 6 | 拖拽语义 | 跨列拖拽 = 更新记录 groupBy 字段值 |
@@ -380,8 +382,10 @@ src/view/kanban/
 | 8 | UI 风格 | 完全复刻 obsidian-kanban 视觉风格 |
 | 9 | 拖拽 API | HTML5 Drag and Drop，不引入额外库 |
 | 10 | 视图注册 | Inline 代码块 + ItemView 两种方式 |
-| 11 | 列菜单 | 复刻 obsidian-kanban：排序/归档/WIP/删除 |
-| 12 | 编辑入口 | 双击卡片 → 复用现有 FormModal |
+| 11 | 列菜单 | 复刻 obsidian-kanban：归档/WIP/删除 |
+| 12 | 编辑入口 | 双击卡片 → 复用 FormModal（FormBuilder），支持编辑和新增 |
+| 13 | 卡片菜单 | 使用 Obsidian `Menu` 模块导入（非 `window.Menu`） |
+| 14 | 列拖拽排序 | 通过列头拖拽手柄（⠿）拖拽重新排序，自定义顺序在 refresh 后保持 |
 
 ---
 
