@@ -82,7 +82,7 @@ export function parseKanbanBlock(content: string): ParseResult {
     // Check multi-word directives first ("group by")
     const groupByMatch = line.match(/^group\s+by\s+(.*)$/i);
     if (groupByMatch) {
-      DIRECTIVES['group by'](groupByMatch[1]!, config);
+      DIRECTIVES['group by']!(groupByMatch[1]!, config);
       continue;
     }
 
