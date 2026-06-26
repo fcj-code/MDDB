@@ -3,7 +3,9 @@
 > 日期：2026-06-10
 > 状态：**已实现** — 查询引擎完整实现（2026-06-13 更新）
 > 依赖：`2026-06-10-storage-engine-design.md`（存储引擎）、`2026-06-10-parse-pipeline-design.md`（解析管道）
-> 实现：`src/query/` — types.ts / validator.ts / sql-generator.ts / assembler.ts / engine.ts
+> 实现：`Obsidian-mddb/src/query/` — types.ts / validator.ts / sql-generator.ts / assembler.ts / engine.ts
+> SQLite 适配器：`Obsidian-mddb/src/storage/sqlite-adapter.ts`
+> 启动集成：`Obsidian-mddb/src/main.ts`（MDDBPlugin.onload）+ `Obsidian-mddb/src/engine/engine.ts`（MDDBEngine.initialize）
 
 ---
 
@@ -113,20 +115,28 @@ interface Query {
 ### 4.1 结构
 
 ```typescript
-/** 单个条件 */
-interface FilterCondition {
-  field: string;                              // 列名
-  op: '=' | '!=' | '>' | '<' | '>=' | '<='   // 比较
-    | 'in' | 'not_in'                          // 集合
-    | 'like' | 'not_like'                      // 模糊匹配
-    | 'is_null' | 'is_not_null';               // 空值判断
-  value?: any | any[];                         // is_null / is_not_null 不需要 value
+/** 简单过滤条件 */
+interface SimpleFilter {
+  field: string;                    // 列名
+  op: FilterOp;                     // 操作符
+  value?: unknown;                  // 值（isNull / isNotNull 不需要）
 }
 
-/** 条件组——递归结构，表达 AND/OR 嵌套 */
+/** 操作符 */
+type FilterOp =
+  | 'eq' | 'neq'                    // 相等/不等
+  | 'gt' | 'gte' | 'lt' | 'lte'    // 比较
+  | 'like' | 'notLike'              // 模糊匹配
+  | 'in' | 'notIn'                  // 集合
+  | 'isNull' | 'isNotNull';         // 空值判断
+
+/** 条件 = 简单条件 | 嵌套组 */
+type FilterCondition = FilterGroup | SimpleFilter;
+
+/** 条件组——递归树结构，表达 AND/OR 嵌套 */
 interface FilterGroup {
-  logic: 'and' | 'or';                         // 组内条件的逻辑关系
-  conditions: (FilterCondition | FilterGroup)[];
+  operator: 'AND' | 'OR';                    // 组内条件的逻辑关系（大写）
+  conditions: FilterCondition[];
 }
 ```
 
@@ -137,10 +147,10 @@ interface FilterGroup {
 ```typescript
 // WHERE 分类 = '餐饮' AND 金额 < -50
 {
-  logic: 'and',
+  operator: 'AND',
   conditions: [
-    { field: '分类', op: '=', value: '餐饮' },
-    { field: '金额', op: '<', value: -5000 }     // decimal 存整数（分）
+    { field: '分类', op: 'eq', value: '餐饮' },
+    { field: '金额', op: 'lt', value: -5000 }     // decimal 存整数（分）
   ]
 }
 ```
@@ -150,26 +160,44 @@ interface FilterGroup {
 ```typescript
 // WHERE (分类 = '餐饮' OR 分类 = '交通') AND 金额 < -50
 {
-  logic: 'and',
+  operator: 'AND',
   conditions: [
     {
-      logic: 'or',
+      operator: 'OR',
       conditions: [
-        { field: '分类', op: '=', value: '餐饮' },
-        { field: '分类', op: '=', value: '交通' }
+        { field: '分类', op: 'eq', value: '餐饮' },
+        { field: '分类', op: 'eq', value: '交通' }
       ]
     },
-    { field: '金额', op: '<', value: -5000 }
+    { field: '金额', op: 'lt', value: -5000 }
   ]
 }
 ```
 
+**操作符对照表：**
+
+| 操作符 | 含义 | SQL 映射 |
+|--------|------|----------|
+| `eq` | 等于 | `=` |
+| `neq` | 不等于 | `!=` |
+| `gt` | 大于 | `>` |
+| `gte` | 大于等于 | `>=` |
+| `lt` | 小于 | `<` |
+| `lte` | 小于等于 | `<=` |
+| `like` | 模糊匹配 | `LIKE` |
+| `notLike` | 模糊不匹配 | `NOT LIKE` |
+| `in` | 集合包含 | `IN (...)` |
+| `notIn` | 集合不包含 | `NOT IN (...)` |
+| `isNull` | 为空 | `IS NULL` |
+| `isNotNull` | 不为空 | `IS NOT NULL` |
+
 ### 4.3 SQL 生成规则
 
 递归遍历树：
-- `logic: 'and'` → `AND` 连接
-- `logic: 'or'` → `OR` 连接
+- `operator: 'AND'` → `AND` 连接
+- `operator: 'OR'` → `OR` 连接
 - 每个 `FilterGroup` 加括号包裹
+- 所有值通过参数化 `?` 绑定，防止 SQL 注入
 
 ---
 
@@ -179,8 +207,8 @@ interface FilterGroup {
 
 ```typescript
 interface SelectClause {
-  fields: string[];                // 要返回的列名列表
-  // 后期可扩展表达式，如 { expr: '金额 / 100', alias: '金额_元' }
+  columns: string[];                // 要返回的列名列表（字段名为 columns 而非 fields）
+  distinct?: boolean;               // 是否 DISTINCT 去重
 }
 ```
 
@@ -193,7 +221,7 @@ interface SelectClause {
 ```typescript
 interface SortClause {
   field: string;                   // 列名
-  dir: 'asc' | 'desc';
+  direction: 'ASC' | 'DESC';      // 字段名为 direction 而非 dir
 }
 ```
 
@@ -210,10 +238,15 @@ interface SortClause {
 
 ```typescript
 interface AggregateClause {
-  field: string;                    // 聚合的列名，'*' 表示 COUNT(*)
-  fn: 'count' | 'sum' | 'avg' | 'min' | 'max';
-  alias?: string;                   // 结果列名，默认自动生成如 'sum_amount'
+  operations: AggregateOp[];       // 聚合操作列表（实际为对象而非数组）
 }
+
+type AggregateOp =
+  | { type: 'COUNT'; field?: string; alias?: string }
+  | { type: 'SUM'; field: string; alias?: string }
+  | { type: 'AVG'; field: string; alias?: string }
+  | { type: 'MIN'; field: string; alias?: string }
+  | { type: 'MAX'; field: string; alias?: string };
 ```
 
 ### 6.2 示例
@@ -225,18 +258,20 @@ interface AggregateClause {
 
 const q: Query = {
   table: 'transactions',
-  filter: { logic: 'and', conditions: [
-    { field: '金额', op: '<', value: 0 }
+  where: { operator: 'AND', conditions: [
+    { field: '金额', op: 'lt', value: 0 }
   ]},
   groupBy: ['分类'],
-  aggregates: [
-    { field: '金额', fn: 'sum', alias: 'total' },
-    { field: '*', fn: 'count', alias: 'cnt' }
-  ],
+  aggregates: {
+    operations: [
+      { type: 'SUM', field: '金额', alias: 'total' },
+      { type: 'COUNT', alias: 'cnt' }
+    ]
+  },
   having: {
-    logic: 'and',
+    operator: 'AND',
     conditions: [
-      { field: 'total', op: '<', value: -10000 }   // 引用 aggregate alias
+      { field: 'total', op: 'lt', value: -10000 }   // 引用 aggregate alias
     ]
   }
 };
@@ -258,10 +293,10 @@ MD-DB 中 `ref(table)` 类型字段存储目标表的 logical_pk 值。查询时
 ### 7.2 结构
 
 ```typescript
-interface FollowRefClause {
+interface RefFollow {
   field: string;              // 当前表中的 ref 字段名，如 '账户'
-  include?: string[];         // 目标表的列名，默认全部，如 ['账户名', '类型']
-  prefix?: string;            // 结果列前缀，默认目标表名，如 'accounts'
+  select: string[];           // 目标表的列名（字段名为 select 而非 include）
+  alias?: string;             // 结果列前缀，默认 `${field}.`（而非目标表名）
 }
 ```
 
@@ -271,12 +306,12 @@ interface FollowRefClause {
 // 查询交易记录，展开关联账户信息
 const q: Query = {
   table: 'transactions',
-  filter: { logic: 'and', conditions: [
-    { field: '日期', op: '>=', value: '2024-06-01' }
+  where: { operator: 'AND', conditions: [
+    { field: '日期', op: 'gte', value: '2024-06-01' }
   ]},
-  sort: [{ field: '日期', dir: 'asc' }],
+  sort: [{ field: '日期', direction: 'ASC' }],
   followRefs: [
-    { field: '账户', include: ['账户名', '类型'], prefix: 'acc' }
+    { field: '账户', select: ['账户名', '类型'], alias: 'acc' }
   ],
   limit: 20
 };
@@ -338,23 +373,28 @@ interface ResultSet {
   rows: Record<string, any>[];     // 数据行
   columns: ColumnMeta[];           // 列元信息
   total: number;                   // 总行数（不受 limit/offset 影响）
-  page: PageInfo | null;           // 分页信息
+  returned: number;                // 实际返回行数
+  page?: number;                   // 当前页码（1-based）
+  pageSize?: number;               // 每页行数
+  totalPages?: number;             // 总页数
+  queryInfo?: {                    // 查询执行信息
+    table: string;
+    hasMore: boolean;
+    durationMs?: number;
+  };
 }
 
 interface ColumnMeta {
   name: string;                    // 列名
-  type: FieldType['kind'];         // 类型：'string' | 'integer' | 'decimal' | ...
-  originalField?: string;          // 聚合/展开列的源字段
-  source: 'data'                   // 原始数据列
-        | 'aggregate'              // 聚合结果
-        | 'ref_follow';            // ref 展开列
+  type: FieldType;                 // 类型表达式，如 'decimal(2)'、'string'
+  label?: string;                  // 显示标签
+  width?: number;                  // 列宽（视图层设置）
+  align?: 'left' | 'center' | 'right';
 }
 
-interface PageInfo {
-  offset: number;
-  limit: number;
-  hasMore: boolean;                // 是否有下一页
-}
+// 实际 FieldType 为 string 别名（完整类型表达式）
+// 如 "decimal(2)"、"enum(支出,收入)"、"ref(categories)"
+export type FieldType = string;
 ```
 
 ### 8.2 示例
@@ -362,19 +402,25 @@ interface PageInfo {
 ```json
 {
   "columns": [
-    { "name": "日期", "type": "date", "source": "data" },
-    { "name": "金额", "type": "decimal", "source": "data" },
-    { "name": "total", "type": "decimal", "source": "aggregate", "originalField": "金额" },
-    { "name": "acc_账户名", "type": "string", "source": "ref_follow", "originalField": "账户" }
+    { "name": "日期", "type": "date" },
+    { "name": "金额", "type": "decimal(2)" },
+    { "name": "total", "type": "decimal(2)" },
+    { "name": "acc.账户名", "type": "string" }
   ],
   "rows": [
-    { "日期": "2024-06-01", "金额": "-45.00", "acc_账户名": "现金钱包" },
-    { "日期": "2024-06-02", "金额": "-128.00", "acc_账户名": "微信零钱" }
+    { "日期": "2024-06-01", "金额": "-45.00", "acc.账户名": "现金钱包" },
+    { "日期": "2024-06-02", "金额": "-128.00", "acc.账户名": "微信零钱" }
   ],
   "total": 156,
-  "page": { "offset": 0, "limit": 20, "hasMore": true }
+  "returned": 2,
+  "page": 1,
+  "pageSize": 200,
+  "totalPages": 1,
+  "queryInfo": { "table": "transactions", "hasMore": false, "durationMs": 3 }
 }
 ```
+
+> **注意**：ref follow 展开列的前缀分隔符为 `.`（如 `acc.账户名`），而非设计文档中的 `_`。
 
 ### 8.3 Decimal 显示
 
@@ -398,34 +444,24 @@ ResultSet: "-16.50"（自动格式化）
 ### 9.2 错误类型
 
 ```typescript
-interface QueryError {
-  code: QueryErrorCode;
-  message: string;           // 人类可读
-  field?: string;            // 出错的 Query 字段路径
-}
-
-enum QueryErrorCode {
-  TABLE_NOT_FOUND = 'TABLE_NOT_FOUND',
-  FIELD_NOT_FOUND = 'FIELD_NOT_FOUND',
-  INVALID_OPERATOR = 'INVALID_OPERATOR',
-  INVALID_VALUE_TYPE = 'INVALID_VALUE_TYPE',
-  REF_FIELD_NOT_FOUND = 'REF_FIELD_NOT_FOUND',
-  AGGREGATE_WITHOUT_GROUPBY = 'AGGREGATE_WITHOUT_GROUPBY',
-  SYNTAX_ERROR = 'SYNTAX_ERROR',            // raw SQL 解析失败
+// 实际实现为宽松验证，返回错误字符串数组
+interface QueryValidationResult {
+  valid: boolean;
+  errors: string[];
 }
 ```
 
 ### 9.3 验证规则
 
-| # | 检查项 | 触发条件 | 错误码 |
-|---|--------|---------|--------|
-| 1 | 表名存在 | 绑定表中无此 `@table` 声明 | `TABLE_NOT_FOUND` |
-| 2 | 列名有效 | `filter`/`sort`/`select` 中的 `field` 不在 Schema 中 | `FIELD_NOT_FOUND` |
-| 3 | 操作符兼容 | 对 `string` 字段用 `>` 等 | `INVALID_OPERATOR` |
-| 4 | 值类型匹配 | 对 `decimal` 字段传字符串 `"abc"` | `INVALID_VALUE_TYPE` |
-| 5 | ref 字段存在 | `followRefs[].field` 的列类型不是 `ref()` | `REF_FIELD_NOT_FOUND` |
-| 6 | 聚合+分组配对 | `aggregates` 存在但 `groupBy` 为空 | `AGGREGATE_WITHOUT_GROUPBY` |
-| 7 | SQL 语法合法 | `queryRaw()` 的 SQL 在 sql.js prepare 阶段失败 | `SYNTAX_ERROR` |
+| # | 检查项 | 触发条件 | 说明 |
+|---|--------|---------|------|
+| 1 | 表名存在 | SchemaRegistry 中无此 `@table` 声明（在 engine.ts 中查，不在 validator 中） | `TABLE_NOT_FOUND` |
+| 2 | 列名有效 | `where`/`sort`/`select`/`groupBy` 中的 `field` 不在 Schema 中 | `FIELD_NOT_FOUND` |
+| 3 | 操作符有效 | `op` 不在 `eq/neq/gt/gte/lt/lte/like/notLike/in/notIn/isNull/isNotNull` 中 | `INVALID_OPERATOR` |
+| 4 | 操作符与值兼容 | `in/notIn` 需要 `value` 为数组，`isNull/isNotNull` 不需要 `value` | `INVALID_VALUE_TYPE` |
+| 5 | 分页合理性 | `limit` / `offset` 不能为负数 | 检查不阻止执行 |
+| 6 | 聚合操作字段 | `aggregates.operations[].field` 不在 Schema 中 | 宽松警告 |
+| 7 | SQL 语法合法 | `queryRaw()` 的 SQL 在 sql.js prepare 阶段失败 | `RAW_QUERY_ERROR` |
 
 **宽松原则**：验证只检查结构合法性。WHERE 条件运行时匹配不到行是正常结果，不是错误。
 
@@ -489,19 +525,20 @@ stmt.bind([-5000, '餐饮']);
 | 1 | 主要用户 | 视图层（B），终端用户 DQL 远期 |
 | 2 | API 抽象层次 | 结构化查询对象 (C) + raw SQL escape hatch (A) |
 | 3 | 查询对象表达能力边界 | 单表/过滤/聚合/ref跟随 ∈ C；JOIN/子查询/窗口函数 ∈ raw SQL |
-| 4 | 结果格式 | ResultSet `{ rows, columns, total, page }` |
+| 4 | 结果格式 | ResultSet `{ rows, columns, total, page, pageSize, totalPages, queryInfo }` |
 | 5 | 执行模型 | 同步，未来按需加异步 |
-| 6 | 过滤模型 | 递归 FilterGroup（AND/OR 树）+ 11 种操作符 |
-| 7 | 聚合模型 | groupBy + aggregates[] + having（复用 FilterGroup） |
+| 6 | 过滤模型 | 递归 FilterGroup（AND/OR 树）+ 12 种操作符（operator 大写） |
+| 7 | 聚合模型 | groupBy + aggregates{ operations[] } + having（复用 FilterGroup） |
 | 8 | ref 跟随 | 两步查询，不破坏原始 ref 值，断裂不报错 |
 | 9 | raw SQL 入口 | 独立方法 `queryRaw(sql, params)` |
-| 10 | 参数化查询 | `query()` 不需要 params，`queryRaw()` 需要 |
-| 11 | 验证策略 | 7 条验证规则，宽松模式——只查结构合法性 |
+| 10 | 参数化查询 | `query()` 使用 `?` 参数化绑定，`queryRaw()` 同样参数化 |
+| 11 | 验证策略 | 宽松验证——只查结构合法性，不阻止执行 |
 | 12 | 模块架构 | QueryValidator → SQLGenerator → ResultAssembler |
-| 13 | SelectClause | 列名列表，后期可扩展表达式 |
-| 14 | SortClause | field + dir，默认走 @sort → 写入时序 |
-| 15 | decimal 显示 | 引擎内部整数 → ResultSet 格式化字符串，视图层无感知 |
+| 13 | SelectClause | `{ columns: string[], distinct?: boolean }` |
+| 14 | SortClause | `{ field, direction: 'ASC'|'DESC' }`，支持单字段或多字段数组 |
+| 15 | decimal 显示 | 引擎内部 BIGINT → ResultSet 格式化字符串，视图层无感知 |
 | 16 | 边缘情况 | 空表/无匹配/越界=正常空结果；ref 断裂=NULL+warning |
+| 17 | 默认 LIMIT | 200（最大 5000） |
 
 ---
 
@@ -523,21 +560,21 @@ stmt.bind([-5000, '餐饮']);
 
 | 模块 | 文件 | 状态 | 说明 |
 |------|------|:----:|------|
-| Type Definitions | `src/query/types.ts` | ✅ 完成 | 所有类型定义（Query / FilterGroup / AggregateClause / ResultSet / ...） |
-| QueryValidator | `src/query/validator.ts` | ✅ 完成 | 7 条验证规则：表存在、字段存在、操作符兼容、ref 检查、聚合分组配对 |
-| SQLGenerator | `src/query/sql-generator.ts` | ✅ 完成 | SELECT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT-OFFSET / 聚合 |
-| ResultAssembler | `src/query/assembler.ts` | ✅ 完成 | decimal 格式化、分页信息构建、ref 跟随展开（assembleWithRefs） |
-| QueryEngine | `src/query/engine.ts` | ✅ 完成 | Validator → Generator → Assembler 管道、COUNT(*) 分页计数、raw SQL |
-| 测试 | `src/query/*.test.ts` | ✅ 完成 | validator(13) + sql-generator(16) + assembler(6) + engine(5) = 40 tests |
+| Type Definitions | `Obsidian-mddb/src/query/types.ts` | ✅ 完成 | 所有类型定义（Query / FilterGroup / AggregateClause / ResultSet / ...） |
+| QueryValidator | `Obsidian-mddb/src/query/validator.ts` | ✅ 完成 | 宽松验证规则：字段存在、操作符合法性、分页合理性 |
+| SQLGenerator | `Obsidian-mddb/src/query/sql-generator.ts` | ✅ 完成 | SELECT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT-OFFSET / 聚合 / ref follow |
+| ResultAssembler | `Obsidian-mddb/src/query/assembler.ts` | ✅ 完成 | decimal 格式化、类型映射、行对象构建 |
+| QueryEngine | `Obsidian-mddb/src/query/engine.ts` | ✅ 完成 | Validator → Generator → Assembler 管道、COUNT(*) 分页计数、raw SQL、ref follow |
+| 测试 | `Obsidian-mddb/src/query/*.test.ts` | ✅ 完成 | validator(13) + sql-generator(16) + assembler(6) + engine(5) = 40 tests |
 
 ### 15.2 与设计的偏差
 
 | 设计项 | 设计文档 | 实际实现 | 说明 |
 |--------|---------|---------|------|
-| `SchemaRegistry` 接口 | 未明确定义 | 在 `validator.ts` 中定义 | 设计文档未指定接口位置，实现选择了就近放置 |
-| `SqlDatabase` 接口 | 未定义 | 在 `engine.ts` 中定义 | 抽离 sql.js 依赖，便于测试 mock |
+| `SchemaRegistry` 访问方式 | 假设从 schema 模块导入 | `SchemaRegistryStore.getSchema(table)` 直接获取 | 实际通过 SchemaRegistryStore 实例注入 QueryEngine |
+| `FilterGroup` 字段名 | 设计文档使用 `filter` 字段 | 实际实现使用 `where` 字段 | 类型定义中过滤条件字段名为 `where` 而非 `filter` |
 | 测试框架 | 未指定 | vitest | 与项目现有工具链一致 |
-| `SchemaRegistry` 访问方式 | 假设从 schema 模块导入 | `BindingStore.getSchema(table)` 包装 | 实际通过 binding-store 获取 Schema |
+| 路径前缀 | `src/` | `Obsidian-mddb/src/` | 代码位于 Obsidian-mddb 子目录 |
 
 ### 15.3 集成点
 
@@ -547,16 +584,44 @@ stmt.bind([-5000, '餐饮']);
 ┌─────────────────────────────────────────────────────────┐
 │                    QueryEngine                           │
 │                                                         │
-│  SchemaRegistry ←── BindingStore.getSchema(table)       │
-│  (validator.ts 中定义)                                    │
+│  SchemaRegistry ←── SchemaRegistryStore.getSchema(table)│
+│  (Obsidian-mddb/src/storage/schema-registry.ts)          │
 │                                                         │
-│  SqlDatabase  ←── sql.js WASM SQLite 实例               │
-│  (engine.ts 中定义: exec / prepare)                      │
+│  SqlDatabase  ←── SQLiteAdapter (sql.js WASM SQLite)    │
+│  (Obsidian-mddb/src/storage/sqlite-adapter.ts)           │
 │                                                         │
-│  SchemaGetter ←── SchemaRegistry.get(table)              │
+│  SchemaGetter ←── SchemaRegistryStore.get(table)         │
 │  (sql-generator.ts 中定义)                                │
 └─────────────────────────────────────────────────────────┘
 ```
+
+**启动集成**（通过 `MDDBEngine`，`Obsidian-mddb/src/engine/engine.ts`）：
+
+QueryEngine 在 MDDBEngine 构造函数中创建，通过 `engine.initialize()` 初始化。MDDBEngine 是顶层 facade，视图层通过 `getEngine()` 全局函数或 `MDDBPlugin.engine` 属性访问。
+
+```
+MDDBPlugin.onload 执行顺序 (Obsidian-mddb/src/main.ts):
+  1. 创建 MDDBEngine(fileOperator, settings)
+     └─ 构造函数内创建 SQLiteAdapter / BindingStore / SchemaRegistryStore / QueryEngine 等子组件
+     └─ QueryEngine(this.sqlite, this.schemaRegistry, identMode, maxQueryRows)
+
+  2. engine.initialize(initSqlJsWithWasm, pluginVersion)
+     └─ SQLiteAdapter.initialize()     ── sql.js WASM 初始化
+     └─ BindingStore.initialize()       ── 创建 _binding 表 + 索引
+     └─ Cache manifest 检查 + 迁移
+     └─ WAL 重放（冷启动恢复）
+     └─ 标记 ready → UI 可用
+     └─ 启动后台校验 + 重试调度
+
+  3. 视图集成 + 代码块处理器注册
+     └─ TableViewModel / KanbanViewModel 通过 this.engine.query() 调用
+```
+
+**存储引擎设计文档关联**：
+- Storage Engine Design §8（冷启动）：MDDBEngine.initialize() 实现了完整的"阶段 1: 阻塞启动"（SQLite init + cache manifest 检查 + WAL 重放）；"阶段 2: 后台验证"由 RescanScheduler 在空闲时触发。
+- Storage Engine Design §4.4（SELECT 查询）：query() 全部在内存 SQLite 中完成，不读文件。
+
+**视图层集成**：Kanban 和 Table 视图通过 MDDBEngine.query() 调用 QueryEngine.query()。详见 `2026-06-13-kanban-view-design.md`。
 
 ### 15.4 待设计（后续）
 
@@ -566,3 +631,39 @@ stmt.bind([-5000, '餐饮']);
 - [ ] 表达式/计算列：SelectClause 中的计算表达式
 - [ ] 全文搜索：text 字段的全文索引
 - [ ] Ref 跟随的延迟加载：目标表未加载时的自动重试机制
+
+### 15.5 视图层绑定（QueryEngine → View Layer）
+
+QueryEngine 不直接暴露给视图层，而是通过 MDDBEngine facade 封装：
+
+```
+视图层 → MDDBEngine.query() → QueryEngine.query()
+视图层 → MDDBEngine.queryRaw() → QueryEngine.queryRaw()
+```
+
+**mddb-table 视图** (`Obsidian-mddb/src/view/table/table-view-model.ts`)：
+- `TableViewModel` 通过 `DataLayer` 间接调用 `engine.query()`
+- `DataLayer` (`Obsidian-mddb/src/view/shared/data-layer.ts`) 提供：查询执行、分页（`goToPage/nextPage/prevPage`）、排序切换（`toggleSort`）、自动刷新（监听 `data-changed` 事件）
+- 编辑/删除/新增通过 `engine.update/delete/insert` 直接调用
+
+**mddb-kanban 视图** (`Obsidian-mddb/src/view/kanban/kanban-view-model.ts`)：
+- `KanbanViewModel` 直接调用 `engine.query()` 构造 Query（含 groupBy 分组）
+- 返回结果在 view model 中按 `groupBy` 字段分组为 lanes
+- CRUD 通过 `engine.update/delete/insert` 直接调用
+- 拖拽移动通过 `engine.update(cardId, { groupField: newValue })` 实现
+
+**mddb-form 视图** (`Obsidian-mddb/src/view/shared/form-builder.ts`)：
+- `FormBuilder.render(engine, schema)` 根据字段类型渲染控件
+- ref 字段预加载：`engine.query({ table: refTable, limit: 500 })` 获取选项
+- 提交时通过 `engine.insert(table, record)` 写入
+
+**ViewConfig 转换** (`Obsidian-mddb/src/view/parser.ts` - `ViewConfigBuilder`)：
+```
+ViewConfig  →  Query
+table       →  query.table
+columns     →  query.select.columns
+filter      →  query.where (通过 parseWhere 转换为 FilterGroup)
+sort        →  query.sort
+pageSize    →  query.limit
+```
+

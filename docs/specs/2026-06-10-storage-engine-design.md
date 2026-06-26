@@ -1,8 +1,10 @@
 # MD-DB 存储引擎设计文档 v1.0
 
 > 日期：2026-06-10
-> 状态：草案 — 已完成存储引擎底层架构设计
+> 状态：**已实现** — 存储引擎完整实现（2026-06-13 更新）
 > 范围：B 形式（行即记录）作为存储引擎内核统一抽象
+> 实现：`Obsidian-mddb/src/storage/` — engine.ts / binding-store.ts / schema-registry.ts / sqlite-adapter.ts / index-writer.ts / file-hash-store.ts
+> 启动集成：`Obsidian-mddb/src/main.ts`（MDDBPlugin.onload 调用 engine.initialize）+ `Obsidian-mddb/src/engine/engine.ts`（MDDBEngine.initialize）
 
 ---
 
@@ -420,23 +422,25 @@ UPDATE | transactions/2024-06.md | storage_pk=... | new_content=...
 | `@sort` | 否 | 默认排序键 | `@sort (日期 ASC)` |
 | `@indexes` | 否 | 建议索引 | `@indexes idx(分类) \| idx(金额)` |
 | `@relations` | 否 | 外键关系 | `@relations 联系人 -> contacts.md:name` |
+| `@null_marker` | 否 | 自定义空值占位符 | `@null_marker: N/A` |
+| `@strict` | 否 | 严格模式标记 | `@strict true` |
 
 ### 9.3 支持的基础类型
 
-| 类型 | 说明 | 存储格式 |
-|------|------|----------|
-| `string` | 字符串 | 原样 |
-| `integer` | 整数 | `42` |
-| `decimal(N)` | 定点小数 | `45.00` |
-| `boolean` | 布尔 | `true` / `false` |
-| `date` | 日期 | `YYYY-MM-DD` |
-| `datetime` | 日期时间 | `YYYY-MM-DD HH:MM:SS` |
-| `enum(v1,v2,...)` | 枚举 | `支出` / `收入` |
-| `text` | 长文本（可含空格/标点） | 支持任意字符 |
-| `tags` | 标签数组 | `#tag1 #tag2` |
-| `ref(table)` | 外键引用 | 逻辑主键值 |
-| `phone` | 手机号格式 | `138xxxx1234` |
-| `email` | 邮箱格式 | `user@example.com` |
+| 类型 | 说明 | 存储格式 | 实现 |
+|------|------|----------|------|
+| `string` | 字符串 | 原样 trim | `Obsidian-mddb/src/parse/converter.ts` convertString |
+| `integer` | 整数 | `42` | convertInteger |
+| `decimal(N)` | 定点小数，内部以 BIGINT 存储（10^N 缩放） | `45.00` | convertDecimal |
+| `boolean` | 布尔，支持多语言（true/yes/1/是/真/✓ 等） | `1` / `0`（SQLite INTEGER） | convertBoolean |
+| `date` | 日期，支持 `YYYY-MM-DD` / `YYYY/MM/DD` / `YYYY.MM.DD` | `YYYY-MM-DD` | convertDate |
+| `datetime` | 日期时间，支持 ISO 8601 | `YYYY-MM-DD HH:MM:SS` | convertDatetime |
+| `enum(v1,v2,...)` | 枚举，精确匹配 | `支出` / `收入` | convertEnum |
+| `text` | 长文本，保留原始内容（不 trim 内部空格，不转义） | 支持任意字符 | convertText |
+| `tags` | 标签数组，正则 `#tag` 提取，自动去重 | JSON 字符串 `["tag1","tag2"]` | convertTags |
+| `ref(table)` | 外键引用，存储目标表的逻辑主键值 | 原样保留 | convertRef |
+| `phone` | 手机号格式，提取数字部分，最少 7 位 | `138xxxx1234`（纯数字） | convertPhone |
+| `email` | 邮箱格式，自动 lowercase | `user@example.com` | convertEmail |
 
 ---
 
@@ -467,8 +471,177 @@ UPDATE | transactions/2024-06.md | storage_pk=... | new_content=...
 
 - [x] 解析管道（Parse Pipeline）→ 详见 `2026-06-10-parse-pipeline-design.md`
 - [ ] 外键引用验证：`ref(table)` 类型的跨文件完整性检查
-- [ ] 查询引擎：类 SQL/DQL 语法定义、查询优化器
+- [x] 查询引擎：类 SQL/DQL 语法定义、查询优化器 → 详见 `2026-06-10-query-engine-design.md`（已实现）
 - [ ] 事务模型：跨行/跨文件事务的具体实现
 - [ ] 视图层接口：存储引擎暴露给视图层的 API
 - [ ] 多文件表：一张表跨多个 `.md` 文件（分区表场景）
 - [ ] A 形式（文件即记录）和 C 形式（块即记录）的适配层
+
+---
+
+## 十二、实现状态（2026-06-13 更新）
+
+### 12.1 实现清单
+
+| 模块 | 文件 | 状态 | 说明 |
+|------|------|:----:|------|
+| SQLiteAdapter | `Obsidian-mddb/src/storage/sqlite-adapter.ts` | ✅ 完成 | sql.js WASM 封装，提供 run / query / safeQuery 接口 |
+| SchemaRegistryStore | `Obsidian-mddb/src/storage/schema-registry.ts` | ✅ 完成 | 内存 Schema 注册表，管理 @table 文件 Schema |
+| BindingStore | `Obsidian-mddb/src/storage/binding-store.ts` | ✅ 完成 | 绑定表（storage_pk → file:line 映射）+ 索引 CRUD |
+| IndexWriter | `Obsidian-mddb/src/storage/index-writer.ts` | ✅ 完成 | 将解析后的记录写入 SQLite 用户表 + _binding 表 |
+| FileHashStore | `Obsidian-mddb/src/storage/file-hash-store.ts` | ✅ 完成 | 文件哈希存储，用于快速变更检测 |
+| MDDBEngine | `Obsidian-mddb/src/engine/engine.ts` | ✅ 完成 | 顶层 facade，组装所有子组件 + 生命周期 + CRUD + 查询 + WAL |
+| Plugin 启动 | `Obsidian-mddb/src/main.ts` | ✅ 完成 | MDDBPlugin.onload 创建引擎、初始化、注册视图和命令 |
+| QueryEngine | `Obsidian-mddb/src/query/engine.ts` | ✅ 完成 | 验证 → SQL 生成 → 结果组装管道 |
+| WAL Manager | `Obsidian-mddb/src/wal/wal-manager.ts` | ✅ 完成 | 写入前持久化 + 重试 + 死信管理 |
+| RescanScheduler | `Obsidian-mddb/src/rescan/rescan-scheduler.ts` | ✅ 完成 | 空闲时后台重扫调度 |
+| FileWatcher | `Obsidian-mddb/src/rescan/file-watcher.ts` | ✅ 完成 | 文件变更监视（自改识别 + 外部变更） |
+
+### 12.2 与设计的偏差
+
+| 设计项 | 设计文档 | 实际实现 | 说明 |
+|--------|---------|---------|------|
+| 缓存结构 | binding.db + file_hashes.json + schema_registry.json | `Obsidian-mddb/src/storage/schema-registry.ts` + `file-hash-store.ts` | SchemaRegistryStore 内存管理，FileHashStore 内存管理，未序列化到 JSON 文件 |
+| WAL 存储 | `.obsidian/plugins/md-db/wal/` | `Obsidian-mddb/src/wal/wal-manager.ts` | InMemoryWalStore / FileWalStore 双模式 |
+| 冷启动流程 | 加载序列化缓存 → WAL 重放 → 就绪 | MDDBEngine.initialize() 按序初始化 | 实际实现：SQLite init → binding 表 → cache manifest → 迁移 → WAL 重放 → ready |
+| Schema 指令解析 | 在解析管道中 | `Obsidian-mddb/src/storage/schema-registry.ts` | SchemaRegistryStore 独立管理，ParsePipeline 解析后写入 |
+| Vault API 代理 | 使用 `app.vault.modify/process` | `Obsidian-mddb/src/main.ts` FileOperator | FileOperator 接口由 MDDBPlugin.createFileOperator() 实现 |
+| CRUD 实现 | StorageEngine 类 | `Obsidian-mddb/src/write/crud-executor.ts` | CRUDExecutor 独立模块，MDDBEngine 封装 |
+| 路径前缀 | `src/` | `Obsidian-mddb/src/` | 代码位于 Obsidian-mddb 子目录 |
+
+### 12.3 启动集成（MDDBPlugin.onload + MDDBEngine.initialize）
+
+冷启动流程分布在 `Obsidian-mddb/src/main.ts` 和 `Obsidian-mddb/src/engine/engine.ts` 中：
+
+```
+MDDBPlugin.onload 执行顺序:
+  1. 创建 MDDBEngine(fileOperator, settings)
+     └─ 构造函数内创建所有子组件
+     └─ SQLiteAdapter / BindingStore / SchemaRegistryStore / QueryEngine / WAL / CRUD 等
+
+  2. engine.initialize(initSqlJsWithWasm, pluginVersion)
+     └─ a. SQLiteAdapter.initialize()     ── sql.js WASM 初始化
+     └─ b. BindingStore.initialize()       ── 创建 _binding 表 + 索引
+     └─ c. Cache manifest 检查            ── 版本校验 → 需要重建则记录
+     └─ d. Cache 迁移                     ── 旧版本 → 新版本 schema 迁移
+     └─ e. WAL 重放                       ── 冷启动恢复未完成的写入
+     └─ f. 标记 ready                     ── 引擎就绪，UI 可用
+     └─ g. 启动后台校验定时器 + 重试调度
+
+  3. 视图集成 + 代码块处理器注册
+     └─ mddb-table / mddb-kanban / mddb-form 处理器
+
+  4. 可选：自动扫描 vault（autoScanOnStart）
+     └─ workspace.onLayoutReady → rescanVault()
+```
+
+**阶段 2 (后台)**：
+- RescanScheduler 在空闲时触发重扫验证
+- RetryScheduler 定期重试失败的 WAL 条目
+### 12.4 与查询引擎设计文档的关联
+
+- Query Engine Design §15.3（集成点）：SchemaRegistry 通过 SchemaRegistryStore 实例注入 QueryEngine，SQLiteAdapter 注入 QueryEngine。
+- Query Engine Design §2.2（API）：query() 和 queryRaw() 在 engine.initialize() 完成后立即可用。
+- Query Engine Design §8（冷启动）：MDDBEngine.initialize() 实现了完整的冷启动流程（SQLite init → binding 表 → cache manifest → WAL 重放 → ready），后台验证由 RescanScheduler 在空闲时触发。
+
+### 12.5 视图层绑定（Storage Engine → View Layer）
+
+存储引擎通过 MDDBEngine facade 暴露给视图层。所有视图组件不直接访问 SQLite 或 BindingStore，统一经过 MDDBEngine。
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                    视图层（Obsidian 代码块处理器）             │
+│                                                           │
+│  mddb-table    →  TableViewModel → DataLayer → query()    │
+│  mddb-kanban   →  KanbanViewModel → query()/update()/...  │
+│  mddb-form     →  FormBuilder → schemaRegistry + insert() │
+└────────────────────────┬──────────────────────────────────┘
+                         │ getEngine()
+┌────────────────────────▼──────────────────────────────────┐
+│                   MDDBEngine (facade)                      │
+│                                                           │
+│  query(q)         → QueryEngine.query()                    │
+│  insert(table,r)  → CRUDExecutor.insert()                  │
+│  update(pk,patch) → CRUDExecutor.update()                  │
+│  delete(pk)       → CRUDExecutor.delete()                  │
+│  schemaRegistry   → SchemaRegistryStore                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+#### 12.5.1 mddb-table 绑定
+
+代码块处理器注册于 `Obsidian-mddb/src/main.ts` 第 122-150 行：
+
+```
+```mddb-table
+from accounts
+show name, type, balance
+where type = "储蓄"
+sort by balance desc
+limit 50
+```
+
+流程：
+1. `parseTableBlock(source)` → `ViewConfig`（`Obsidian-mddb/src/view/parser.ts`）
+2. `new TableViewModel(id, engine, config)` → 内部创建 `DataLayer`
+3. `DataLayer.executeQuery(query)` → `engine.query(query)`（`Obsidian-mddb/src/view/shared/data-layer.ts`）
+4. `DataLayer` 监听 engine 的 `data-changed` 事件，自动刷新
+5. 编辑：`TableViewModel.commitEdit()` → `engine.update(storagePk, patch)` → `CRUDExecutor.update()`
+6. 删除：`TableViewModel.deleteRow()` → `engine.delete(storagePk)` → `CRUDExecutor.delete()`
+7. 新增：`TableViewModel.insertRow()` → `engine.insert(table, record)` → `CRUDExecutor.insert()`
+
+#### 12.5.2 mddb-kanban 绑定
+
+代码块处理器注册于 `Obsidian-mddb/src/main.ts` 第 152-174 行：
+
+```
+```mddb-kanban
+from tasks
+group by status
+show title, priority, assignee
+```
+
+流程：
+1. `parseKanbanBlock(source)` → `KanbanConfig`
+2. `new KanbanViewModel(id, engine, config)`（`Obsidian-mddb/src/view/kanban/kanban-view-model.ts`）
+3. `vm.initialize()` → 构造 `Query` → `engine.query(q)` → 按 `groupBy` 字段分组为 lanes
+4. 拖拽移动：`KanbanViewModel.moveCard(cardId, fromLane, toLane, toIndex)` → `engine.update(cardId, { groupBy: newValue })`
+5. 新增卡片：`KanbanViewModel.addCard(laneId, values)` → `engine.insert(table, { ...values, groupBy: laneValue })`
+6. 删除卡片：`KanbanViewModel.deleteCard(cardId)` → `engine.delete(cardId)`
+7. 更新字段：`KanbanViewModel.updateCardField(cardId, field, value)` → `engine.update(cardId, { field: value })`
+
+#### 12.5.3 mddb-form 绑定
+
+代码块处理器注册于 `Obsidian-mddb/src/main.ts` 第 176-222 行：
+
+```
+```mddb-form
+to transactions
+fields 日期, 金额, 分类, 账户
+mode new
+```
+
+流程：
+1. `parseFormBlock(source)` → `FormConfig{ table, fields, mode, layout, keepOpen }`
+2. `engine.schemaRegistry.getSchema(config.table)` — 获取表 Schema 以决定控件类型
+3. `FormBuilder.render(engine, schema, options)`（`Obsidian-mddb/src/view/shared/form-builder.ts`）
+   - 对 `boolean` 类型 → checkbox
+   - 对 `ref(table)` 类型 → `<select>`，自动查询目标表填充选项
+   - 对 `enum(...)` 类型 → `<select>` 填充枚举值
+   - 对 `date` 类型 → `<input type="date">`
+   - 其他类型 → `<input type="text">`
+4. 提交：`engine.insert(config.table, record)` → `CRUDExecutor.insert()`
+5. `config.keepOpen` 控制提交后是否重置表单
+
+**FormBuilder ref 预加载**（`Obsidian-mddb/src/view/shared/form-builder.ts` 第 26-45 行）：
+```
+for each ref(table) field in schema:
+    engine.query({ table: refTable, limit: 500 })
+        → 缓存 [{ value, label }] 作为 <option>
+```
+
+### 12.6 与查询引擎设计文档的关联（补充）
+
+- Query Engine Design §3.1：实际 Query 类型中过滤条件字段名为 `where` 而非 `filter`，`sort` 支持单字段 `SortClause | SortClause[]`
+- Query Engine Design §4.1：实际 FilterGroup 使用 `operator: 'AND' | 'OR'` 而非 `logic: 'and' | 'or'`，操作符为 `eq`/`neq`/`gt`/`gte`/`lt`/`lte`/`like`/`notLike`/`in`/`notIn`/`isNull`/`isNotNull`
+- Query Engine Design §15.1：实际文件路径为 `Obsidian-mddb/src/query/`，SQLite 适配器为 `SQLiteAdapter`（`Obsidian-mddb/src/storage/sqlite-adapter.ts`）
