@@ -1,0 +1,127 @@
+/* ================================================================
+   MD-DB Gallery Styles
+   ================================================================ */
+
+.mddb-gallery {
+  width: 100%;
+}
+
+.mddb-gallery-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.mddb-gallery-add {
+  font-size: var(--font-ui-small);
+}
+
+.mddb-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.mddb-gallery-grid.fixed {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.mddb-gallery-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.mddb-gallery-card:hover {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.mddb-gallery-card-image {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+
+.mddb-gallery-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mddb-gallery-card-image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 2rem;
+  opacity: 0.4;
+}
+
+.mddb-gallery-card-menu {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--text-on-accent, #fff);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.mddb-gallery-card:hover .mddb-gallery-card-menu {
+  opacity: 1;
+}
+
+.mddb-gallery-card-body {
+  padding: 0.5rem 0.75rem;
+}
+
+.mddb-gallery-card-title {
+  font-weight: 600;
+  font-size: var(--font-ui-small);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mddb-gallery-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.mddb-gallery-card-meta-row {
+  display: flex;
+  gap: 0.4rem;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.mddb-gallery-card-meta-key {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.mddb-gallery-card-meta-val {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mddb-gallery-status,
+.mddb-gallery-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+}

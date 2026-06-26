@@ -835,6 +835,14 @@ export class MDDBEngine {
     if (!this._ready) {
       throw new EngineError('Engine not initialized', 'ENGINE_NOT_READY');
     }
+    // 先 DROP 所有用户表 —— 仅清 binding/registry 会把 SQLite 用户表里的旧行
+    // 残留下来，使“重建”后历史孤儿行仍可见（如重复渲染累积的行）。
+    // 必须在 schemaRegistry.clearAll() 之前枚举表名。
+    for (const table of this.schemaRegistry.getTableNames()) {
+      try {
+        this.sqlite.run(`DROP TABLE IF EXISTS ${safeIdent(table, this.identMode)}`);
+      } catch { /* 表可能不存在 */ }
+    }
     // 清空 binding 表
     this.binding.clearAll();
     // 清空 schema registry

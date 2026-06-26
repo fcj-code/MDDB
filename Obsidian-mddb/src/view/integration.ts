@@ -14,6 +14,9 @@ import type { MDDBEngine } from '../engine/engine';
 import { KANBAN_VIEW_TYPE, KanbanView } from './kanban/kanban-view';
 import { parseKanbanBlock } from './kanban/parser';
 import type { KanbanConfig } from './kanban/kanban-config';
+import { GALLERY_VIEW_TYPE, GalleryView } from './gallery/gallery-view';
+import { parseGalleryBlock } from './gallery/parser';
+import type { GalleryConfig } from './gallery/gallery-config';
 
 // ============================================================
 // 视图注册器
@@ -48,6 +51,14 @@ export class ViewIntegration {
         columns: [],
         groupBy: '',
       }),
+    );
+
+    this.plugin.registerView(
+      GALLERY_VIEW_TYPE,
+      (leaf) => new GalleryView(leaf, this.engine, {
+        table: '',
+        columns: [],
+      }, this.plugin.app),
     );
   }
 
@@ -106,6 +117,31 @@ export class ViewIntegration {
     }
     if (result.config) {
       await this.openKanbanView(result.config);
+    }
+  }
+
+  /**
+   * 打开画廊视图
+   */
+  async openGalleryView(config: GalleryConfig): Promise<void> {
+    const leaf = this.plugin.app.workspace.getLeaf(true);
+    const view = new GalleryView(leaf, this.engine, config, this.plugin.app);
+    leaf.setViewState({
+      type: GALLERY_VIEW_TYPE,
+      active: true,
+    });
+  }
+
+  /**
+   * 从代码块内容创建画廊视图
+   */
+  async openGalleryFromBlock(blockContent: string): Promise<void> {
+    const result = parseGalleryBlock(blockContent);
+    if (!result.success) {
+      throw new Error(`Failed to parse mddb-gallery block:\n${result.errors.join('\n')}`);
+    }
+    if (result.config) {
+      await this.openGalleryView(result.config);
     }
   }
 }

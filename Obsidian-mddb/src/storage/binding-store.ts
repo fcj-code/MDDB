@@ -35,9 +35,16 @@ export class BindingStore {
       )
     `);
 
+    // 逻辑 PK 唯一约束：仅对“有真实逻辑 PK”的记录强制唯一。
+    // $uuid / 无 @pk 的表 logical_pk 为 ''，SQLite 会把多个 '' 视为相等值
+    // → 同表多记录折叠成一条 binding，造成重复行累积与编辑/删除失效。
+    // 用 partial index 把空 logical_pk 排除在唯一约束外（其身份由 storage_pk 主键区分）。
+    // 旧版建立的是无条件唯一索引，先 DROP 以便已有 cache 在重载后自愈。
+    this.sqlite.run(`DROP INDEX IF EXISTS idx_binding_logical`);
     this.sqlite.run(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_binding_logical
       ON _binding(table_name, logical_pk)
+      WHERE logical_pk != ''
     `);
 
     this.sqlite.run(`

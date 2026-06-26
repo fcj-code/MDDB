@@ -12,6 +12,9 @@ import { FormBuilder } from './view/shared/form-builder';
 import { KanbanViewModel } from './view/kanban/kanban-view-model';
 import { InlineKanbanRenderer } from './view/kanban/inline-renderer';
 import { parseKanbanBlock } from './view/kanban/parser';
+import { GalleryViewModel } from './view/gallery/gallery-view-model';
+import { InlineGalleryRenderer } from './view/gallery/inline-renderer';
+import { parseGalleryBlock } from './view/gallery/parser';
 
 // sql.js JS 在 esbuild 打包时内联，WASM 通过 fs.readFileSync 加载
 // （__dirname 在 Obsidian Electron 中不可靠，且 file:// 被安全策略阻止）
@@ -170,6 +173,30 @@ export default class MDDBPlugin extends Plugin {
         renderer.mount();
         (el as any).__mddbKanbanRenderer = renderer;
         (el as any).__mddbKanbanViewModel = vm;
+      });
+    });
+
+    // ── mddb-gallery 代码块处理器 ──
+    this.registerMarkdownCodeBlockProcessor('mddb-gallery', (source, el) => {
+      if (el.hasClass('mddb-rendered')) return;
+      el.addClass('mddb-rendered');
+      el.empty();
+
+      const result = parseGalleryBlock(source);
+      if (!result.success || !result.config) {
+        el.createEl('div', {
+          cls: 'mddb-error',
+          text: `MD-DB parse error:\n${result.errors.join('\n')}`,
+        });
+        return;
+      }
+
+      const vm = new GalleryViewModel(`gallery-${Date.now()}`, this.engine, result.config, this.app);
+      vm.initialize().then(() => {
+        const renderer = new InlineGalleryRenderer(vm, el);
+        renderer.mount();
+        (el as any).__mddbGalleryRenderer = renderer;
+        (el as any).__mddbGalleryViewModel = vm;
       });
     });
 

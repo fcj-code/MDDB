@@ -144,8 +144,11 @@ export function writeRecords(
       schema.table,
     );
 
-    // 生成 rowHash
-    const rowHash = generateRowHash(record.rawLine);
+    // 生成 rowHash —— 必须与 CRUD/relocateLineByRowHash 的约定一致：
+    // 二者均按 hashLine(line.trimEnd()) 定位行。若此处用未 trim 的 rawLine，
+    // 带尾部空白的数据行（如 "a | b | "）哈希不匹配 → force 模式无法重定位
+    // → 编辑/删除失效。
+    const rowHash = generateRowHash(record.rawLine.trimEnd());
 
     // 写入用户表（包含 storage_pk 作为第一列）
     const params = [storagePk, ...record.values.map(v => {
