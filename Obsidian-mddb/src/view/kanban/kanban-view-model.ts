@@ -9,6 +9,7 @@
 import type { Query, ResultSet } from '../../query/types';
 import type { KanbanConfig } from './kanban-config';
 import type { MDDBEngine } from '../../engine/engine';
+import type { Disposable } from '../../core/types';
 import { BaseViewModel } from '../base-view-model';
 import { ViewConfigBuilder } from '../parser';
 
@@ -51,6 +52,10 @@ export class KanbanViewModel extends BaseViewModel {
   private _searchQuery = '';
   /** 用户拖拽后自定义的列顺序（laneId[]），refresh 时保持此顺序 */
   private _laneOrder: string[] = [];
+  /** 引擎 data-changed 订阅（跨视图 / 外部回灌同步） */
+  private _engineSub?: Disposable;
+  /** 引擎事件去抖刷新定时器（rescan 会按文件多次 emit） */
+  private _refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     viewId: string,
@@ -63,6 +68,10 @@ export class KanbanViewModel extends BaseViewModel {
       groupField: _config.groupBy,
       totalCards: 0,
     };
+
+    // 订阅引擎数据变更：表单/其他表格/看板写入、外部手改回灌都会 emit，
+    // 去抖后刷新，避免与同表其他视图脱钩
+    this._engineSub = this.engine.on('data-changed', () => this.scheduleRefresh());
   }
 
   get config(): KanbanConfig {
@@ -108,7 +117,22 @@ export class KanbanViewModel extends BaseViewModel {
     await this.initialize();
   }
 
+  /** 引擎事件驱动的去抖刷新（自身 CRUD 仍走显式 refresh，立即生效） */
+  private scheduleRefresh(): void {
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
+    this._refreshTimer = setTimeout(() => {
+      this._refreshTimer = null;
+      void this.refresh();
+    }, 200);
+  }
+
   destroy(): void {
+    if (this._refreshTimer) {
+      clearTimeout(this._refreshTimer);
+      this._refreshTimer = null;
+    }
+    this._engineSub?.dispose();
+    this._engineSub = undefined;
     super.destroy();
   }
 

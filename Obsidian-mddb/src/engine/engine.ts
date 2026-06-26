@@ -46,6 +46,7 @@ import { ParsePipeline } from '../parse/pipeline';
 import { QueryEngine } from '../query/engine';
 import { DiagnosticsManager } from './diagnostics';
 import { CRUDExecutor } from '../write/crud-executor';
+import { validateRecord } from '../write/validate';
 import { WalManager, InMemoryWalStore, FileWalStore } from '../wal/wal-manager';
 import { DeadLetterHandler } from '../wal/dead-letter';
 import { RetryScheduler } from '../wal/retry-scheduler';
@@ -55,7 +56,7 @@ import { FileWatcher } from '../rescan/file-watcher';
 import { RescanScheduler } from '../rescan/rescan-scheduler';
 import { replayAllWals } from '../wal/replay';
 import { ok, err } from '../core/result';
-import { EngineError, WriteError } from '../core/errors';
+import { EngineError, WriteError, ValidationError } from '../core/errors';
 import { safeIdent } from '../schema/validators';
 import { TransactionManager } from '../transaction/transaction-manager';
 
@@ -400,6 +401,14 @@ export class MDDBEngine {
     const fileHash = simpleHash(fileContent);
     this.fileHash.setHash(filePath, fileHash);
 
+    // 回灌链路通知视图层：外部/手改回灌、rescan、调度重扫均经此路径，
+    // 让订阅 data-changed 的视图（DataLayer / 看板）自动刷新
+    this.emit('data-changed', {
+      source: 'parse',
+      filePath,
+      tables: result.tables.map(t => t.tableName),
+    });
+
     return result;
     } finally {
       this._parsing.delete(filePath);
@@ -511,6 +520,18 @@ export class MDDBEngine {
     }
 
     try {
+      const schema = this.schemaRegistry.getSchema(_table);
+      if (schema) {
+        const fieldErrors = validateRecord(schema, _record);
+        if (fieldErrors.length > 0) {
+          throw new ValidationError(
+            fieldErrors.map(e => e.message).join('；'),
+            fieldErrors,
+            _table,
+          );
+        }
+      }
+
       // WAL 创建设在 CRUDExecutor 内部完成
       // MVP 单文件写入暂不生成 WAL（M3 完整 WAL 通过 CRUDExecutor 集成）
       const result = await this.crud.insert(_table, _record);
@@ -545,6 +566,18 @@ export class MDDBEngine {
       const binding = this.binding.findByStoragePk(_storagePk);
       if (!binding) {
         throw new EngineError(`Record not found: ${_storagePk}`, 'RECORD_NOT_FOUND');
+      }
+
+      const schema = this.schemaRegistry.getSchema(binding.tableName);
+      if (schema) {
+        const fieldErrors = validateRecord(schema, _patch, { partial: true });
+        if (fieldErrors.length > 0) {
+          throw new ValidationError(
+            fieldErrors.map(e => e.message).join('；'),
+            fieldErrors,
+            binding.tableName,
+          );
+        }
       }
 
       const result = await this.crud.update(_storagePk, _patch, _options);
@@ -682,14 +715,24 @@ export class MDDBEngine {
 
   /**
    * 通知文件修改
+   *
+   * 自改回声抑制：CRUD 写文件后会把新内容哈希写入 FileHashStore；
+   * 紧随其后的 vault 'modify' 回声内容与该哈希一致 → 跳过，避免回声循环。
+   * 内容哈希不一致 → 判定为真外部/手动修改 → 重新解析回灌索引
+   * （parseFile 内部 emit data-changed，驱动已打开视图刷新）。
    */
-  async onFileModified(filePath: string, content: string, ownerId?: string): Promise<void> {
-    await this.fileWatcher.onFileModify(filePath, ownerId);
+  async onFileModified(filePath: string, content: string): Promise<void> {
+    await this.fileWatcher.onFileModify(filePath);
 
-    if (this._ready && !ownerId) {
-      // 外部修改 → 重新解析
-      this.parseFile(content, filePath);
+    if (!this._ready) return;
+
+    // 自改回声：内容与上次写入/解析后的已知哈希一致 → 跳过
+    if (this.fileHash.isMatch(filePath, simpleHash(content))) {
+      return;
     }
+
+    // 真外部修改 → 重新解析
+    this.parseFile(content, filePath);
   }
 
   /**

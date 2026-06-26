@@ -87,3 +87,20 @@ export class ConflictError extends EngineError {
     this.name = 'ConflictError';
   }
 }
+
+/** 单字段校验错误 */
+export interface FieldValidationError {
+  field: string;
+  message: string;
+}
+
+export class ValidationError extends EngineError {
+  constructor(
+    message: string,
+    public readonly fieldErrors: FieldValidationError[],
+    table?: string,
+  ) {
+    super(message, 'VALIDATION_ERROR', table);
+    this.name = 'ValidationError';
+  }
+}

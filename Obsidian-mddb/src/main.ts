@@ -242,7 +242,7 @@ export default class MDDBPlugin extends Plugin {
         if (!(file instanceof TFile)) return;
         if (!file.path.endsWith('.md')) return;
         this.app.vault.read(file).then(content => {
-          return this.engine.onFileModified(file.path, content, 'plugin');
+          return this.engine.onFileModified(file.path, content);
         }).catch((err) => {
           if (err && (err as Error).message?.includes('Schema') === false) {
             console.warn('MD-DB onFileModified:', (err as Error).message ?? err);

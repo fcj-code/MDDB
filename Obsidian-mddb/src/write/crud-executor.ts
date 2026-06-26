@@ -328,9 +328,17 @@ export class CRUDExecutor {
       if (!options?.force) {
         assertLineHash(content, binding.lineNumber, binding.rowHash, filePath, tableName);
       } else {
-        // force 模式下重新搜索 storage_pk 定位行
-        const found = findLineByPkInContent(content, storagePk);
-        if (found > 0) actualLineNumber = found;
+        // force 模式下按内容身份（rowHash）重新定位行：行号可能因外部增删漂移。
+        // 定位失败说明目标行已被外部删除/改写，宁可报错也不盲写陈旧行号改错行。
+        actualLineNumber = relocateLineByRowHash(content, binding.lineNumber, binding.rowHash);
+        if (actualLineNumber <= 0) {
+          throw new ConflictError(
+            `Cannot relocate row for storagePk "${storagePk}" in "${filePath}". ` +
+            'The row may have been removed or changed externally.',
+            [filePath],
+            tableName,
+          );
+        }
       }
 
       // 4. 读取旧行 → 应用 patch
@@ -425,8 +433,16 @@ export class CRUDExecutor {
       if (!options?.force) {
         assertLineHash(content, binding.lineNumber, binding.rowHash, filePath, tableName);
       } else {
-        const found = findLineByPkInContent(content, storagePk);
-        if (found > 0) actualLineNumber = found;
+        // force 模式下按内容身份（rowHash）重新定位行（同 update），定位失败则报错不删错行
+        actualLineNumber = relocateLineByRowHash(content, binding.lineNumber, binding.rowHash);
+        if (actualLineNumber <= 0) {
+          throw new ConflictError(
+            `Cannot relocate row for storagePk "${storagePk}" in "${filePath}". ` +
+            'The row may have been removed or changed externally.',
+            [filePath],
+            tableName,
+          );
+        }
       }
 
       // 删除行
@@ -709,15 +725,31 @@ function extractPrecision(typeExpr: string): number {
 }
 
 /**
- * 在文件内容中按行搜索 storage_pk
- * 用于 force 模式下重新定位行号
+ * force 模式下按内容身份（rowHash）重新定位目标行号（1-based）。
+ *
+ * storage_pk 是哈希、从不写入行内，旧的 storage_pk 子串搜索必然失败，
+ * 还可能因数字子串误命中无关行 → 改/删错行。改为按 binding.rowHash
+ * （= hashLine(line.trimEnd())）定位：
+ * 1. 原 lineNumber 若仍命中 rowHash → 直接用（行未移动）
+ * 2. 否则全文件扫描首个命中 rowHash 的行（行因外部增删而漂移）
+ * 3. 都不命中 → 返回 -1（调用方应拒绝写入，避免改错行）
  */
-function findLineByPkInContent(content: string, storagePk: string): number {
+function relocateLineByRowHash(content: string, lineNumber: number, rowHash: string): number {
   const lines = content.split('\n');
+
+  if (
+    lineNumber >= 1 &&
+    lineNumber <= lines.length &&
+    hashLine(lines[lineNumber - 1]!.trimEnd()) === rowHash
+  ) {
+    return lineNumber;
+  }
+
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i]!.includes(storagePk)) {
-      return i + 1; // 1-based line number
+    if (hashLine(lines[i]!.trimEnd()) === rowHash) {
+      return i + 1;
     }
   }
+
   return -1;
 }

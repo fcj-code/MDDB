@@ -560,6 +560,76 @@ describe('CRUDExecutor', () => {
       expect(content).not.toContain('B账户');
     });
   });
+
+  // ============================================================
+  // force 重定位（断点4）
+  //
+  // storage_pk 是哈希、从不写入行内，旧的 storage_pk 子串搜索必然失败，
+  // force 模式因此退化为盲信 binding.lineNumber —— 行号一旦因外部增删
+  // 漂移，就会改/删错行。修复后应按 binding.rowHash 内容身份重定位。
+  // ============================================================
+
+  describe('force relocation (断点4)', () => {
+    /** 在 marker 行之前插入一行，模拟外部编辑使该行下移、binding.lineNumber 变陈旧 */
+    function spliceLineBefore(content: string, marker: string, newLine: string): string {
+      const lines = content.split('\n');
+      const idx = lines.findIndex(l => l.includes(marker));
+      lines.splice(idx, 0, newLine);
+      return lines.join('\n');
+    }
+
+    it('update force：行因外部增删而漂移时，按内容重定位命中正确行（不改邻行）', async () => {
+      const r1 = await executor.insert('accounts', { name: '锚点A', balance: 100, type: '储蓄' });
+
+      // 外部编辑：在 '锚点A' 行前插入一行入侵行 → '锚点A' 下移，binding.lineNumber 现指向入侵行
+      const shifted = spliceLineBefore(
+        await fileOp.readFile(FILE_PATH),
+        '锚点A',
+        '入侵行 | 0.00 | 储蓄 | - | 不应被改',
+      );
+      await fileOp.writeFile(FILE_PATH, shifted);
+
+      await executor.update(r1.storagePk, { balance: 888 }, { force: true });
+
+      const afterLines = (await fileOp.readFile(FILE_PATH)).split('\n');
+      const anchorLine = afterLines.find(l => l.includes('锚点A'))!;
+      const intruderLine = afterLines.find(l => l.includes('入侵行'))!;
+
+      expect(anchorLine).toContain('888');        // 目标行被更新
+      expect(intruderLine).toContain('不应被改');   // 邻行内容保持
+      expect(intruderLine).not.toContain('888');   // 邻行未被误改
+    });
+
+    it('delete force：行漂移时删除正确行（不删邻行）', async () => {
+      const r1 = await executor.insert('accounts', { name: '删锚A', balance: 100, type: '储蓄' });
+
+      const shifted = spliceLineBefore(
+        await fileOp.readFile(FILE_PATH),
+        '删锚A',
+        '删入侵行 | 0.00 | 储蓄 | - | 不应被删',
+      );
+      await fileOp.writeFile(FILE_PATH, shifted);
+
+      await executor.delete(r1.storagePk, { force: true });
+
+      const after = await fileOp.readFile(FILE_PATH);
+      expect(after).not.toContain('删锚A');     // 目标行被删
+      expect(after).toContain('删入侵行');       // 邻行保留
+    });
+
+    it('update force：目标行已被外部删除、无法定位时抛错（不盲写陈旧行号）', async () => {
+      const r1 = await executor.insert('accounts', { name: '消失行', balance: 100, type: '储蓄' });
+
+      // 外部删除该行 → rowHash 在文件中无任何匹配
+      const content = await fileOp.readFile(FILE_PATH);
+      const removed = content.split('\n').filter(l => !l.includes('消失行')).join('\n');
+      await fileOp.writeFile(FILE_PATH, removed);
+
+      await expect(
+        executor.update(r1.storagePk, { balance: 1 }, { force: true }),
+      ).rejects.toThrow(ConflictError);
+    });
+  });
 });
 
 // ============================================================

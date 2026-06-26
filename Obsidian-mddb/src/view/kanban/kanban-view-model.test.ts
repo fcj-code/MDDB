@@ -8,6 +8,7 @@ function createMockEngine() {
     insert: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+    on: vi.fn(() => ({ dispose: vi.fn() })),
     schemaRegistry: { getSchema: vi.fn() },
   } as any;
 }
@@ -235,5 +236,66 @@ describe('KanbanViewModel', () => {
 
     expect(vm.board.lanes).toHaveLength(0);
     expect(vm.status).toBe('error');
+  });
+
+  it('订阅引擎 data-changed：外部/跨视图写入后看板自动刷新', async () => {
+    vi.useFakeTimers();
+    try {
+      const engine = createMockEngine();
+      let dataChangedHandler: (() => void) | undefined;
+      engine.on.mockImplementation((evt: string, h: () => void) => {
+        if (evt === 'data-changed') dataChangedHandler = h;
+        return { dispose: vi.fn() };
+      });
+      engine.query.mockReturnValue({
+        ok: true,
+        value: {
+          rows: [{ storage_pk: '1', 标题: 'Task A', 状态: '待处理' }],
+          columns: [{ name: 'storage_pk', type: 'string' }, { name: '标题', type: 'string' }, { name: '状态', type: 'string' }],
+          total: 1,
+        },
+      });
+
+      const config: KanbanConfig = { table: 'tasks', columns: ['标题'], groupBy: '状态' };
+      const vm = new KanbanViewModel('test-sync', engine, config);
+      await vm.initialize();
+      expect(engine.query).toHaveBeenCalledTimes(1);
+      expect(dataChangedHandler).toBeTypeOf('function');
+
+      // 引擎数据变更（其他视图写入 / 外部回灌）→ 看板应重新查询
+      engine.query.mockReturnValue({
+        ok: true,
+        value: {
+          rows: [
+            { storage_pk: '1', 标题: 'Task A', 状态: '待处理' },
+            { storage_pk: '2', 标题: 'Task B', 状态: '进行中' },
+          ],
+          columns: [{ name: 'storage_pk', type: 'string' }, { name: '标题', type: 'string' }, { name: '状态', type: 'string' }],
+          total: 2,
+        },
+      });
+
+      dataChangedHandler!();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(engine.query).toHaveBeenCalledTimes(2);
+      expect(vm.board.totalCards).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('destroy 释放引擎订阅', async () => {
+    const engine = createMockEngine();
+    const dispose = vi.fn();
+    engine.on.mockReturnValue({ dispose });
+    engine.query.mockReturnValue({ ok: true, value: { rows: [], columns: [], total: 0 } });
+
+    const config: KanbanConfig = { table: 'tasks', columns: ['标题'], groupBy: '状态' };
+    const vm = new KanbanViewModel('test-destroy', engine, config);
+    await vm.initialize();
+
+    vm.destroy();
+    expect(dispose).toHaveBeenCalled();
   });
 });
